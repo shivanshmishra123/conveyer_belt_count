@@ -3,6 +3,7 @@ from pydantic import BaseModel
 import redis
 import pymysql
 from datetime import datetime
+import time
 
 app = FastAPI(title="Cement Dispatch API")
 
@@ -46,38 +47,140 @@ def startup_event():
 # --- PYDANTIC SCHEMAS ---
 class CountPayload(BaseModel):
     belt_id: str
-    count: int
+    bag_id: str
     timestamp: float
 
-class SessionPayload(BaseModel):
+class SessionControlPayload(BaseModel):
     belt_id: str
-    start_time: float
-    end_time: float
-    total_count: int
 
 # --- API ENDPOINTS ---
 @app.post("/api/v1/count_increment")
 def update_live_count(payload: CountPayload):
-    # Overwrite the current live count in Redis instantly
-    r.set(f"{payload.belt_id}:live_count", payload.count)
-    r.set(f"{payload.belt_id}:last_updated", payload.timestamp)
-    return {"status": "success", "redis_live_count": payload.count}
+    belt_id = payload.belt_id
+    bag_id = payload.bag_id
+    
+    status = r.get(f"{belt_id}:status") or "idle"
+    if status != "running":
+        return {
+            "status": "ignored", 
+            "message": f"Count increment ignored. Belt session is currently {status}.",
+            "redis_live_count": int(r.get(f"{belt_id}:live_count") or 0)
+        }
+    
+    # Redis Set deduplication
+    is_member = r.sismember(f"{belt_id}:counted_bags", bag_id)
+    if not is_member:
+        r.sadd(f"{belt_id}:counted_bags", bag_id)
+        current_count = r.incr(f"{belt_id}:live_count")
+        r.set(f"{belt_id}:last_updated", payload.timestamp)
+        return {"status": "success", "redis_live_count": current_count}
+    else:
+        current_count = int(r.get(f"{belt_id}:live_count") or 0)
+        return {"status": "duplicate_ignored", "redis_live_count": current_count}
 
-@app.post("/api/v1/session_completed")
-def save_session(payload: SessionPayload):
-    # 1. Save the final summary to MySQL
+@app.post("/api/v1/session/start")
+def start_session(payload: SessionControlPayload):
+    belt_id = payload.belt_id
+    status = r.get(f"{belt_id}:status") or "idle"
+    if status != "idle":
+        return {"status": "error", "message": f"Session is already {status}"}
+    
+    current_time = time.time()
+    r.set(f"{belt_id}:status", "running")
+    r.set(f"{belt_id}:live_count", 0)
+    r.set(f"{belt_id}:start_time", current_time)
+    r.set(f"{belt_id}:total_paused_time", 0.0)
+    r.delete(f"{belt_id}:counted_bags")
+    
+    return {"status": "success", "message": f"Session started for {belt_id}"}
+
+@app.post("/api/v1/session/pause")
+def pause_session(payload: SessionControlPayload):
+    belt_id = payload.belt_id
+    status = r.get(f"{belt_id}:status") or "idle"
+    if status != "running":
+        return {"status": "error", "message": f"Cannot pause session when status is {status}"}
+    
+    current_time = time.time()
+    r.set(f"{belt_id}:status", "paused")
+    r.set(f"{belt_id}:last_pause_time", current_time)
+    
+    return {"status": "success", "message": f"Session paused for {belt_id}"}
+
+@app.post("/api/v1/session/resume")
+def resume_session(payload: SessionControlPayload):
+    belt_id = payload.belt_id
+    status = r.get(f"{belt_id}:status") or "idle"
+    if status != "paused":
+        return {"status": "error", "message": f"Cannot resume session when status is {status}"}
+    
+    current_time = time.time()
+    last_pause_time = float(r.get(f"{belt_id}:last_pause_time") or current_time)
+    paused_duration = current_time - last_pause_time
+    r.set(f"{belt_id}:status", "running")
+    r.incrbyfloat(f"{belt_id}:total_paused_time", paused_duration)
+    
+    return {"status": "success", "message": f"Session resumed for {belt_id}"}
+
+@app.post("/api/v1/session/complete")
+def complete_session(payload: SessionControlPayload):
+    belt_id = payload.belt_id
+    status = r.get(f"{belt_id}:status") or "idle"
+    if status == "idle":
+        return {"status": "error", "message": "No active session to complete"}
+    
+    current_time = time.time()
+    start_time = float(r.get(f"{belt_id}:start_time") or current_time)
+    total_paused_time = float(r.get(f"{belt_id}:total_paused_time") or 0.0)
+    
+    if status == "paused":
+        last_pause_time = float(r.get(f"{belt_id}:last_pause_time") or current_time)
+        paused_duration = current_time - last_pause_time
+        total_paused_time += paused_duration
+        
+    live_count = int(r.get(f"{belt_id}:live_count") or 0)
+    active_duration = max(0.0, current_time - start_time - total_paused_time)
+    end_time = start_time + active_duration
+    
     conn = get_db_connection()
     with conn.cursor() as cursor:
         sql = "INSERT INTO sessions (belt_id, start_time, end_time, total_count) VALUES (%s, %s, %s, %s)"
-        cursor.execute(sql, (payload.belt_id, payload.start_time, payload.end_time, payload.total_count))
+        cursor.execute(sql, (belt_id, start_time, end_time, live_count))
     conn.commit()
     conn.close()
     
-    # 2. Reset the Redis live count back to 0 for the next truck
-    r.set(f"{payload.belt_id}:live_count", 0)
+    r.set(f"{belt_id}:status", "idle")
+    r.set(f"{belt_id}:live_count", 0)
+    r.delete(f"{belt_id}:counted_bags")
     
-    print(f"[SUCCESS] Saved session for {payload.belt_id} to MySQL Vault.")
-    return {"status": "success", "message": "Session saved to database"}
+    print(f"[SUCCESS] Saved session for {belt_id} to MySQL Vault.")
+    return {
+        "status": "success", 
+        "message": f"Session completed for {belt_id}",
+        "total_count": live_count,
+        "active_duration": active_duration
+    }
+
+@app.get("/api/v1/session/status/{belt_id}")
+def get_session_status(belt_id: str):
+    status = r.get(f"{belt_id}:status") or "idle"
+    live_count = int(r.get(f"{belt_id}:live_count") or 0)
+    start_time = r.get(f"{belt_id}:start_time")
+    total_paused_time = float(r.get(f"{belt_id}:total_paused_time") or 0.0)
+    
+    elapsed_time = 0.0
+    if status == "running" and start_time:
+        elapsed_time = time.time() - float(start_time) - total_paused_time
+    elif status == "paused" and start_time:
+        last_pause_time = float(r.get(f"{belt_id}:last_pause_time") or time.time())
+        elapsed_time = last_pause_time - float(start_time) - total_paused_time
+    
+    return {
+        "belt_id": belt_id,
+        "status": status,
+        "live_count": live_count,
+        "active_duration": max(0.0, elapsed_time)
+    }
 # --- DASHBOARD ENDPOINTS (VERIFICATION) ---
 
 @app.get("/api/v1/live_count/{belt_id}")
