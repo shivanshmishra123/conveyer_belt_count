@@ -8,7 +8,7 @@ import threading
 # --- CONFIGURATION ---
 BELT_ID = "belt_01"
 VIDEO_SOURCE = "A_fixed_static_top_down_came.mp4" 
-FASTAPI_BASE_URL = "http://localhost:8000"
+FASTAPI_BASE_URL = "http://127.0.0.1:8000"
 
 COUNTING_LINE_X = 100 
 

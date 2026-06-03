@@ -9,12 +9,12 @@ app = FastAPI(title="Cement Dispatch API")
 
 # --- DATABASE CONNECTIONS ---
 # Redis (The Fast Cache)
-r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+r = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
 
 # MySQL (The Permanent Vault)
 def get_db_connection():
     return pymysql.connect(
-        host='localhost',
+        host='127.0.0.1',
         user='api_user',
         password='apipassword',
         database='cement_dispatch',
@@ -24,7 +24,7 @@ def get_db_connection():
 # --- STARTUP LOGIC ---
 @app.on_event("startup")
 def startup_event():
-    """Automatically builds the MySQL table when the server boots."""
+    """Automatically builds the MySQL table and upgrades schema precision when the server boots."""
     try:
         conn = get_db_connection()
         with conn.cursor() as cursor:
@@ -32,12 +32,15 @@ def startup_event():
                 CREATE TABLE IF NOT EXISTS sessions (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     belt_id VARCHAR(50),
-                    start_time FLOAT,
-                    end_time FLOAT,
+                    start_time DOUBLE,
+                    end_time DOUBLE,
                     total_count INT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Migrate existing tables to double precision to prevent Unix epoch truncation
+            cursor.execute("ALTER TABLE sessions MODIFY COLUMN start_time DOUBLE")
+            cursor.execute("ALTER TABLE sessions MODIFY COLUMN end_time DOUBLE")
         conn.commit()
         conn.close()
         print("[INFO] MySQL connection successful. 'sessions' table ready.")
