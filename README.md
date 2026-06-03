@@ -9,7 +9,7 @@ This document compiles the **Software Requirements Specification (SRS)**, **Acti
 The **Cement Factory Dispatch Monitoring System** is a real-time, computer-vision-driven solution designed to automate and monitor the dispatch loading process at a cement plant.
 
 ### Core Objectives:
-* **Automated Counting**: Automatically count cement bags loaded onto dispatch wagons from **25 conveyor belts** using **50 IP cameras** (2 cameras per belt for redundancy and coverage).
+* **Automated Counting**: Automatically count cement bags loaded onto dispatch wagons from **25 conveyor belts** using **25 IP cameras** (1 camera per belt).
 * **Session Tracking**: Track the duration and loading history of each dispatch wagon.
 * **Low-Latency Monitoring**: Expose real-time bag counts and status updates to a centralized dashboard.
 * **Historical Auditing**: Persist completed session summaries to a relational database for auditing and operational planning.
@@ -22,7 +22,7 @@ The system is designed with a decentralized, three-tier architecture to handle h
 
 ```
                    +-------------------+
-                   |   50 IP Cameras   |
+                   |   25 IP Cameras   |
                    +---------+---------+
                              | RTSP
                              v
@@ -47,7 +47,7 @@ The system is designed with a decentralized, three-tier architecture to handle h
 
 ### Technology Stack details:
 * **Edge Inference**: YOLOv8 (Nano model for edge performance) + ByteTrack for object detection and persistent tracking. Runs inside Docker containers to allow access to local GPU resources.
-* **Orchestration**: Docker Swarm manages container placements across **12–13 physical edge GPU nodes** (running 4–5 stream containers per node) and supports automatic container recovery.
+* **Orchestration**: Docker Swarm manages container placements across **5–6 physical edge GPU nodes** (running 4–5 stream containers per node) and supports automatic container recovery.
 * **Central Backend**: FastAPI (Python) web server handling lightweight API events.
 * **Caching (Live State)**: Redis (In-memory database) for sub-millisecond status updates and real-time dashboard consumption.
 * **Relational Storage (Permanent Vault)**: MySQL for persisting audited session results.
@@ -114,10 +114,12 @@ Runs locally on the edge nodes and manages the camera streams.
 
 ---
 
-### 4.3 Database Infrastructure: [infrastructure/docker-compose.yml](file:///c:/Users/13shi/Pictures/cement-dispatch/infrastructure/docker-compose.yml)
-Defines container services to spin up local developer databases:
-* **Redis**: Runs on port `6379`.
-* **MySQL 8.0**: Runs on port `3306` (stores records under database `cement_dispatch`).
+### 4.3 Database Infrastructure & Multi-Stream Orchestration
+* **Local Development**: [infrastructure/docker-compose.yml](file:///c:/Users/13shi/Pictures/cement-dispatch/infrastructure/docker-compose.yml) spins up developer instances of Redis and MySQL.
+* **Production Scaling**: [infrastructure/docker-swarm-stack.yml](file:///c:/Users/13shi/Pictures/cement-dispatch/infrastructure/docker-swarm-stack.yml) defines the swarm orchestration for 25 belts:
+  * Scales the FastAPI backend to multiple load-balanced replicas.
+  * Schedules edge containers onto physical GPU nodes using Docker constraints.
+  * Connects container streams to NVIDIA GPUs for hardware acceleration.
 
 ---
 

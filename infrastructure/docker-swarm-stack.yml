@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # --- Redis (Live State Cache) ---
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  # --- MySQL (Persistent Storage) ---
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: cement_dispatch
+      MYSQL_USER: api_user
+      MYSQL_PASSWORD: apipassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  # --- Central FastAPI Backend (Load-Balanced Replicas) ---
+  backend:
+    image: cement-dispatch-backend:latest
+    environment:
+      - REDIS_HOST=redis
+      - MYSQL_HOST=mysql
+    ports:
+      - "8000:8000"
+    deploy:
+      replicas: 3  # Docker Swarm ingress routing mesh balances requests across these 3 replicas
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  # --- Edge Node Processor Template (Example for Belt 1 & 2) ---
+  # In production, these services are automatically scheduled onto GPU-enabled edge nodes.
+  edge_processor_belt_01:
+    image: cement-dispatch-edge:latest
+    environment:
+      - BELT_ID=belt_01
+      - VIDEO_SOURCE=rtsp://admin:password@10.0.1.51/stream1
+      - FASTAPI_BASE_URL=http://backend:8000
+      - COUNTING_LINE_X=100
+    deploy:
+      placement:
+        constraints:
+          - node.labels.gpu == true
+          - node.labels.edge_id == node_01  # Pin to physical edge node 1
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+      restart_policy:
+        condition: on-failure
+
+  edge_processor_belt_02:
+    image: cement-dispatch-edge:latest
+    environment:
+      - BELT_ID=belt_02
+      - VIDEO_SOURCE=rtsp://admin:password@10.0.1.52/stream1
+      - FASTAPI_BASE_URL=http://backend:8000
+      - COUNTING_LINE_X=120
+    deploy:
+      placement:
+        constraints:
+          - node.labels.gpu == true
+          - node.labels.edge_id == node_01  # Pin to physical edge node 1 (shares node with belt 1)
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+      restart_policy:
+        condition: on-failure
+
+  # ... Repeat service definitions for belts 03 through 25, assigning 1 container per belt/stream (25 total streams).
+
+volumes:
+  mysql_data:
