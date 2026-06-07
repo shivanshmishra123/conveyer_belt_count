@@ -1,0 +1,13 @@
+# ============================================================
+# Cement Dispatch Edge Node — Python Dependencies
+# ============================================================
+# NOTE: The Docker base image (ultralytics/ultralytics:latest)
+# already bundles: torch, torchvision, opencv-python, numpy, ultralytics.
+# Only ADDITIONAL packages required by belt_processor.py are listed here.
+# Install with: pip install -r requirements.txt
+
+# HTTP client (for posting count increments to the FastAPI backend)
+requests==2.32.3
+
+# Load .env files for local development overrides
+python-dotenv==1.0.1

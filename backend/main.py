@@ -1,23 +1,46 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import redis
 import pymysql
 from datetime import datetime
 import time
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (no-op if file not found)
+load_dotenv()
 
 app = FastAPI(title="Cement Dispatch API")
 
+# Parse CORS origins from env — split comma-separated list, fallback to allow-all
+_cors_env = os.getenv("CORS_ORIGINS", "*")
+CORS_ORIGINS = [o.strip() for o in _cors_env.split(",")] if _cors_env != "*" else ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # --- DATABASE CONNECTIONS ---
 # Redis (The Fast Cache)
-r = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
+r = redis.Redis(
+    host=os.getenv("REDIS_HOST", "127.0.0.1"),
+    port=int(os.getenv("REDIS_PORT", 6379)),
+    decode_responses=True
+)
 
 # MySQL (The Permanent Vault)
 def get_db_connection():
     return pymysql.connect(
-        host='127.0.0.1',
-        user='api_user',
-        password='apipassword',
-        database='cement_dispatch',
+        host=os.getenv("DB_HOST", "127.0.0.1"),
+        port=int(os.getenv("DB_PORT", 3306)),
+        user=os.getenv("DB_USER", "api_user"),
+        password=os.getenv("DB_PASSWORD", "apipassword"),
+        database=os.getenv("DB_NAME", "cement_dispatch"),
         cursorclass=pymysql.cursors.DictCursor
     )
 

@@ -1,0 +1,6 @@
+{
+  "belt_id": "belt_01",
+  "video_source": "A_fixed_static_top_down_came.mp4",
+  "fastapi_base_url": "http://127.0.0.1:8000",
+  "counting_line_x": 100
+}

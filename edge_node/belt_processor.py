@@ -5,12 +5,53 @@ import numpy as np
 from ultralytics import YOLO
 import threading
 
-# --- CONFIGURATION ---
-BELT_ID = "belt_01"
-VIDEO_SOURCE = "A_fixed_static_top_down_came.mp4" 
-FASTAPI_BASE_URL = "http://127.0.0.1:8000"
+import os
+import json
+from dotenv import load_dotenv
 
-COUNTING_LINE_X = 100 
+# Load environment variables from .env file (no-op if file not found)
+load_dotenv()
+
+def load_config():
+    config = {
+        "BELT_ID": "belt_01",
+        "VIDEO_SOURCE": "A_fixed_static_top_down_came.mp4",
+        "FASTAPI_BASE_URL": "http://127.0.0.1:8000",
+        "COUNTING_LINE_X": 100
+    }
+    # Load config file (defaults to config.json)
+    config_path = os.environ.get("BELT_CONFIG_PATH", "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                file_config = json.load(f)
+                for key in ["belt_id", "video_source", "fastapi_base_url", "counting_line_x"]:
+                    if key in file_config:
+                        config[key.upper()] = file_config[key]
+            print(f"[INFO] Loaded configuration from {config_path}")
+        except Exception as e:
+            print(f"[WARNING] Failed to parse config file: {e}")
+            
+    # Override using environment variables if present
+    for var_name in config.keys():
+        env_val = os.environ.get(var_name)
+        if env_val is not None:
+            if var_name == "COUNTING_LINE_X":
+                try:
+                    config[var_name] = int(env_val)
+                except ValueError:
+                    pass
+            else:
+                config[var_name] = env_val
+            print(f"[INFO] Overrode {var_name} from environment variable.")
+    return config
+
+# --- DYNAMIC CONFIGURATION ---
+CONFIG = load_config()
+BELT_ID = CONFIG["BELT_ID"]
+VIDEO_SOURCE = CONFIG["VIDEO_SOURCE"]
+FASTAPI_BASE_URL = CONFIG["FASTAPI_BASE_URL"]
+COUNTING_LINE_X = CONFIG["COUNTING_LINE_X"] 
 
 # --- STATE MACHINE VARIABLES ---
 session_status = "idle"  # "idle", "running", "paused"
