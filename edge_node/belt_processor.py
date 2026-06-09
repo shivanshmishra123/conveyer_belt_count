@@ -79,6 +79,19 @@ def poll_backend_status():
             pass
         time.sleep(1.0)
 
+def send_heartbeats():
+    url = f"{FASTAPI_BASE_URL}/api/v1/heartbeat"
+    while True:
+        try:
+            payload = {
+                "belt_id": BELT_ID,
+                "timestamp": time.time()
+            }
+            requests.post(url, json=payload, timeout=2)
+        except Exception:
+            pass
+        time.sleep(5.0)
+
 def send_http_post_with_retry(endpoint, payload, max_retries=3):
     """Sends HTTP POST with exponential backoff for fault tolerance (NFR-3.1)."""
     url = f"{FASTAPI_BASE_URL}/{endpoint}"
@@ -166,6 +179,11 @@ def process_video():
     cv2.destroyAllWindows()
 if __name__ == "__main__":
     # Start background polling thread
-    t = threading.Thread(target=poll_backend_status, daemon=True)
-    t.start()
+    t_status = threading.Thread(target=poll_backend_status, daemon=True)
+    t_status.start()
+    
+    # Start background heartbeat thread
+    t_hb = threading.Thread(target=send_heartbeats, daemon=True)
+    t_hb.start()
+    
     process_video()

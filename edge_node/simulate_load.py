@@ -52,6 +52,9 @@ def simulate_belt(belt_num):
     with stats_lock:
         session_expected_counts[belt_id] = target_count
         
+    # 0. Register Heartbeat
+    track_request("POST", "api/v1/heartbeat", {"belt_id": belt_id, "timestamp": time.time()})
+        
     # 1. Start the Session
     track_request("POST", "api/v1/session/start", {"belt_id": belt_id})
     print(f"[{belt_id}] Started session. Target bag count: {target_count}")

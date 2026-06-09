@@ -79,6 +79,11 @@ class CountPayload(BaseModel):
 class SessionControlPayload(BaseModel):
     belt_id: str
 
+class HeartbeatPayload(BaseModel):
+    belt_id: str
+    timestamp: float
+
+
 # --- API ENDPOINTS ---
 @app.post("/api/v1/count_increment")
 def update_live_count(payload: CountPayload):
@@ -103,6 +108,13 @@ def update_live_count(payload: CountPayload):
     else:
         current_count = int(r.get(f"{belt_id}:live_count") or 0)
         return {"status": "duplicate_ignored", "redis_live_count": current_count}
+
+@app.post("/api/v1/heartbeat")
+def record_heartbeat(payload: HeartbeatPayload):
+    belt_id = payload.belt_id
+    r.set(f"{belt_id}:last_heartbeat", payload.timestamp)
+    return {"status": "success", "message": f"Heartbeat received for {belt_id}"}
+
 
 @app.post("/api/v1/session/start")
 def start_session(payload: SessionControlPayload):
@@ -201,11 +213,18 @@ def get_session_status(belt_id: str):
         last_pause_time = float(r.get(f"{belt_id}:last_pause_time") or time.time())
         elapsed_time = last_pause_time - float(start_time) - total_paused_time
     
+    # Calculate online status (within 15s window)
+    last_hb = r.get(f"{belt_id}:last_heartbeat")
+    is_online = False
+    if last_hb:
+        is_online = (time.time() - float(last_hb)) < 15.0
+        
     return {
         "belt_id": belt_id,
         "status": status,
         "live_count": live_count,
-        "active_duration": max(0.0, elapsed_time)
+        "active_duration": max(0.0, elapsed_time),
+        "is_online": is_online
     }
 # --- DASHBOARD ENDPOINTS (VERIFICATION) ---
 
@@ -227,3 +246,61 @@ def get_all_sessions():
     conn.close()
     
     return {"total_sessions_saved": len(results), "sessions": results}
+
+@app.get("/api/v1/analytics/summary")
+def get_analytics_summary():
+    """
+    Aggregates all completed session data from MySQL into shift-level analytics.
+    Returns global totals and a per-belt breakdown sorted by total bags loaded.
+    """
+    conn = get_db_connection()
+    with conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT
+                belt_id,
+                COUNT(*) AS session_count,
+                SUM(total_count) AS total_bags,
+                AVG(end_time - start_time) AS avg_duration_secs
+            FROM sessions
+            GROUP BY belt_id
+            ORDER BY total_bags DESC
+        """)
+        per_belt = cursor.fetchall()
+    conn.close()
+
+    if not per_belt:
+        return {
+            "total_sessions": 0,
+            "total_bags_loaded": 0,
+            "avg_bags_per_session": 0.0,
+            "avg_session_duration_secs": 0.0,
+            "busiest_belt": None,
+            "per_belt": []
+        }
+
+    total_sessions = sum(row["session_count"] for row in per_belt)
+    total_bags = sum(row["total_bags"] for row in per_belt)
+    avg_bags = round(total_bags / total_sessions, 1) if total_sessions > 0 else 0.0
+    avg_duration = round(
+        sum(row["avg_duration_secs"] * row["session_count"] for row in per_belt) / total_sessions, 1
+    ) if total_sessions > 0 else 0.0
+
+    # Sanitize float values from Decimal returned by MySQL
+    sanitized_per_belt = [
+        {
+            "belt_id": row["belt_id"],
+            "session_count": int(row["session_count"]),
+            "total_bags": int(row["total_bags"]),
+            "avg_duration_secs": round(float(row["avg_duration_secs"]), 1)
+        }
+        for row in per_belt
+    ]
+
+    return {
+        "total_sessions": total_sessions,
+        "total_bags_loaded": int(total_bags),
+        "avg_bags_per_session": avg_bags,
+        "avg_session_duration_secs": avg_duration,
+        "busiest_belt": sanitized_per_belt[0]["belt_id"] if sanitized_per_belt else None,
+        "per_belt": sanitized_per_belt
+    }
