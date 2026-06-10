@@ -20,7 +20,8 @@ const BACKEND_URL = "http://127.0.0.1:8000";
 function App() {
   const [beltStatuses, setBeltStatuses] = useState({});
   const [sessions, setSessions] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
+  const [shiftData, setShiftData] = useState(null);   // live shift state from /shift/current
+  const [lastShift, setLastShift] = useState(null);   // completed shift summary from /shift/last
   const [errorMessage, setErrorMessage] = useState("");
 
   // Helper: Format seconds to MM:SS
@@ -81,33 +82,50 @@ function App() {
     }
   };
 
-  // Fetch aggregated shift analytics (Called every 30 seconds — data changes slowly)
-  const fetchAnalytics = async () => {
+  // Fetch live shift state from backend (active or idle)
+  const fetchShiftCurrent = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/analytics/summary`);
+      const res = await fetch(`${BACKEND_URL}/api/v1/shift/current`);
       if (res.ok) {
         const data = await res.json();
-        setAnalytics(data);
+        setShiftData(data);
+        // When shift is idle, also pull the last completed shift summary
+        if (data.shift_status === "idle") {
+          fetchLastShift();
+        }
       }
     } catch (err) {
-      console.error("Error fetching analytics:", err);
+      console.error("Error fetching shift state:", err);
     }
   };
 
-  // Initial load and slow status polling (5-second intervals to minimize backend load)
+  // Fetch the most recently completed shift summary from MySQL
+  const fetchLastShift = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/shift/last`);
+      if (res.ok) {
+        const data = await res.json();
+        setLastShift(data.shift || null);
+      }
+    } catch (err) {
+      console.error("Error fetching last shift:", err);
+    }
+  };
+
+  // Initial load and polling intervals
   useEffect(() => {
     fetchAllStatuses();
     fetchCompletedSessions();
-    fetchAnalytics();
+    fetchShiftCurrent();
 
-    const statusInterval = setInterval(fetchAllStatuses, 5000);
-    const sessionInterval = setInterval(fetchCompletedSessions, 5000);
-    const analyticsInterval = setInterval(fetchAnalytics, 30000);
+    const statusInterval   = setInterval(fetchAllStatuses, 5000);
+    const sessionInterval  = setInterval(fetchCompletedSessions, 5000);
+    const shiftInterval    = setInterval(fetchShiftCurrent, 10000);
 
     return () => {
       clearInterval(statusInterval);
       clearInterval(sessionInterval);
-      clearInterval(analyticsInterval);
+      clearInterval(shiftInterval);
     };
   }, []);
 
@@ -331,115 +349,132 @@ function App() {
           </div>
         </section>
 
-        {/* --- SHIFT ANALYTICS --- */}
+        {/* --- SHIFT SUMMARY --- */}
         <section className="space-y-4">
           <div className="flex items-center gap-2 mb-1">
             <BarChart2 className="h-5 w-5 text-sky-400" />
-            <h2 className="text-xl font-bold text-white">Shift Analytics</h2>
-            <span className="text-xs text-slate-500 ml-1">(refreshes every 30s)</span>
+            <h2 className="text-xl font-bold text-white">Shift Summary</h2>
+            <span className="text-xs text-slate-500 ml-1">(updates every 10s)</span>
           </div>
 
-          {!analytics || analytics.total_sessions === 0 ? (
+          {/* STATE 1: Shift currently active — show live in-progress totals */}
+          {shiftData && shiftData.shift_status === "active" && (
+            <div className="space-y-4">
+              {/* Active shift header banner */}
+              <div className="bg-emerald-950/30 border border-emerald-800/50 rounded-2xl p-5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
+                  <div>
+                    <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wider">Shift In Progress</p>
+                    <p className="text-white font-bold mt-0.5">
+                      {shiftData.belts_active} belt{shiftData.belts_active !== 1 ? 's' : ''} active
+                      &nbsp;·&nbsp;
+                      {formatDuration(shiftData.shift_start_time ? Date.now() / 1000 - shiftData.shift_start_time : 0)} elapsed
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Total Bags So Far</p>
+                  <p className="text-3xl font-black text-emerald-400">{shiftData.total_bags_so_far}</p>
+                </div>
+              </div>
+
+              {/* Per-belt live counts — only belts with bags > 0 */}
+              {Object.keys(shiftData.per_belt).length > 0 && (
+                <div className="bg-slate-900/30 border border-slate-800 rounded-2xl p-6">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">Belt-wise Count (Live)</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    {Object.entries(shiftData.per_belt)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([beltId, count]) => (
+                        <div key={beltId} className="bg-slate-800/50 rounded-lg px-3 py-2 flex flex-col items-center">
+                          <span className="text-[10px] text-slate-400 uppercase font-semibold">{beltId.replace('_', ' ')}</span>
+                          <span className="text-lg font-black text-emerald-400">{count}</span>
+                          <span className="text-[9px] text-slate-500">bags</span>
+                        </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* STATE 2: No shift active — show last completed shift summary */}
+          {(!shiftData || shiftData.shift_status === "idle") && lastShift && (
+            <div className="space-y-4">
+              {/* Completed shift header */}
+              <div className="bg-sky-950/30 border border-sky-800/40 rounded-2xl p-5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="h-6 w-6 text-sky-400" />
+                  <div>
+                    <p className="text-xs text-sky-400 font-semibold uppercase tracking-wider">Last Shift Complete</p>
+                    <p className="text-white font-bold mt-0.5">Duration: {formatDuration(lastShift.duration_secs)}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Total Bags Loaded</p>
+                  <p className="text-3xl font-black text-sky-400">{lastShift.total_bags.toLocaleString()}</p>
+                </div>
+              </div>
+
+              {/* Per-belt final breakdown */}
+              {lastShift.belt_summary && Object.keys(lastShift.belt_summary).length > 0 && (
+                <div className="bg-slate-900/30 border border-slate-800 rounded-2xl p-6">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
+                    Belt-wise Breakdown — {Object.keys(lastShift.belt_summary).length} belt{Object.keys(lastShift.belt_summary).length !== 1 ? 's' : ''} active
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase">
+                          <th className="py-3 px-4">Rank</th>
+                          <th className="py-3 px-4">Belt ID</th>
+                          <th className="py-3 px-4 text-right">Bags Loaded</th>
+                          <th className="py-3 px-4 text-right">Share</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/50 text-sm text-slate-300">
+                        {Object.entries(lastShift.belt_summary)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([beltId, count], idx) => (
+                            <tr key={beltId} className={`hover:bg-slate-900/20 transition-colors ${idx === 0 ? 'bg-sky-950/10' : ''}`}>
+                              <td className="py-3 px-4 font-mono text-xs">
+                                {idx === 0 ? <span className="text-amber-400 font-bold">🥇 1</span>
+                                  : idx === 1 ? <span className="text-slate-300 font-bold">🥈 2</span>
+                                  : idx === 2 ? <span className="text-amber-700 font-bold">🥉 3</span>
+                                  : <span className="text-slate-500">#{idx + 1}</span>}
+                              </td>
+                              <td className="py-3 px-4 font-bold text-white uppercase">{beltId.replace('_', ' ')}</td>
+                              <td className="py-3 px-4 text-right font-black text-emerald-400 text-base">{count}</td>
+                              <td className="py-3 px-4 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  <div className="w-20 bg-slate-800 rounded-full h-1.5">
+                                    <div
+                                      className="bg-emerald-500 h-1.5 rounded-full"
+                                      style={{ width: `${Math.round((count / lastShift.total_bags) * 100)}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-xs text-slate-400 font-mono w-8 text-right">
+                                    {Math.round((count / lastShift.total_bags) * 100)}%
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* STATE 3: No shift ever run */}
+          {(!shiftData || shiftData.shift_status === "idle") && !lastShift && (
             <div className="bg-slate-900/30 border border-slate-800 rounded-2xl p-10 text-center text-slate-500">
               <BarChart2 className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              <p>No completed sessions yet. Analytics will appear after the first session is completed.</p>
+              <p>No shifts completed yet. Start belts to begin a shift — the summary will appear here when all belts are stopped.</p>
             </div>
-          ) : (
-            <>
-              {/* --- 4 Metric Cards --- */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 flex items-center gap-4">
-                  <div className="p-3 rounded-lg bg-emerald-500/10 text-emerald-400 shrink-0">
-                    <TrendingUp className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Bags Loaded</p>
-                    <h3 className="text-2xl font-black text-emerald-400 mt-0.5">{analytics.total_bags_loaded.toLocaleString()}</h3>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 flex items-center gap-4">
-                  <div className="p-3 rounded-lg bg-sky-500/10 text-sky-400 shrink-0">
-                    <CheckCircle className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Sessions</p>
-                    <h3 className="text-2xl font-black text-sky-400 mt-0.5">{analytics.total_sessions}</h3>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 flex items-center gap-4">
-                  <div className="p-3 rounded-lg bg-purple-500/10 text-purple-400 shrink-0">
-                    <Database className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Avg Bags / Session</p>
-                    <h3 className="text-2xl font-black text-purple-400 mt-0.5">{analytics.avg_bags_per_session}</h3>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 flex items-center gap-4">
-                  <div className="p-3 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
-                    <Timer className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Avg Load Duration</p>
-                    <h3 className="text-2xl font-black text-amber-400 mt-0.5">{formatDuration(analytics.avg_session_duration_secs)}</h3>
-                  </div>
-                </div>
-              </div>
-
-              {/* --- Per-Belt Breakdown Table --- */}
-              <div className="bg-slate-900/30 border border-slate-800 rounded-2xl p-6">
-                <div className="flex items-center gap-2 mb-4 border-b border-slate-800 pb-3 justify-between">
-                  <div className="flex items-center gap-2">
-                    <Award className="h-5 w-5 text-amber-400" />
-                    <h3 className="text-lg font-bold text-white">Belt Leaderboard</h3>
-                    {analytics.busiest_belt && (
-                      <span className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full font-semibold uppercase">
-                        🏆 {analytics.busiest_belt.replace("_", " ")} leading
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-xs text-slate-400 font-mono">{analytics.per_belt.length} active belts</span>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase">
-                        <th className="py-3 px-4">Rank</th>
-                        <th className="py-3 px-4">Belt ID</th>
-                        <th className="py-3 px-4 text-center">Sessions</th>
-                        <th className="py-3 px-4 text-right">Total Bags</th>
-                        <th className="py-3 px-4 text-right">Avg Duration</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/50 text-sm text-slate-300">
-                      {analytics.per_belt.map((belt, idx) => (
-                        <tr key={belt.belt_id} className={`hover:bg-slate-900/20 transition-colors ${idx === 0 ? 'bg-amber-950/10' : ''}`}>
-                          <td className="py-3 px-4 font-mono text-xs">
-                            {idx === 0 ? (
-                              <span className="text-amber-400 font-bold">🥇 1</span>
-                            ) : idx === 1 ? (
-                              <span className="text-slate-300 font-bold">🥈 2</span>
-                            ) : idx === 2 ? (
-                              <span className="text-amber-700 font-bold">🥉 3</span>
-                            ) : (
-                              <span className="text-slate-500">#{idx + 1}</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 font-bold text-white uppercase">{belt.belt_id.replace("_", " ")}</td>
-                          <td className="py-3 px-4 text-center text-slate-300">{belt.session_count}</td>
-                          <td className="py-3 px-4 text-right font-bold text-emerald-400">{belt.total_bags.toLocaleString()}</td>
-                          <td className="py-3 px-4 text-right font-mono text-xs">{formatDuration(belt.avg_duration_secs)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
           )}
         </section>
 
