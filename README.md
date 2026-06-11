@@ -1,212 +1,197 @@
-# Cement Factory Dispatch Monitoring System
-## Comprehensive System & Code Documentation
-
-This document compiles the **Software Requirements Specification (SRS)**, **Activity & Data Flow Design**, and **Codebase Implementations** for the Cement Factory Dispatch Monitoring System.
+# Cement Dispatch Monitoring System
+**Developer Documentation & Technical Reference**
 
 ---
 
-## 1. Executive Summary & Goals
-The **Cement Factory Dispatch Monitoring System** is a real-time, computer-vision-driven solution designed to automate and monitor the dispatch loading process at a cement plant.
+## 1. Project Overview
 
-### Core Objectives:
-* **Automated Counting**: Automatically count cement bags loaded onto dispatch wagons from **25 conveyor belts** using **25 IP cameras** (1 camera per belt).
-* **Session Tracking**: Track the duration and loading history of each dispatch wagon.
-* **Low-Latency Monitoring**: Expose real-time bag counts and status updates to a centralized dashboard.
-* **Historical Auditing**: Persist completed session summaries to a relational database for auditing and operational planning.
+The **Cement Dispatch Monitoring System** is an automated, computer-vision-based solution designed to track cement bags as they are loaded onto dispatch wagons across 25 parallel conveyor belts. 
+
+Instead of relying on human operators to tally bags manually, this system deploys **Edge AI nodes** (running YOLOv8 models) directly on the factory floor. These nodes detect bags crossing a line and send real-time HTTP events to a **Central Cloud/Local Server**, which aggregates the counts, manages "loading sessions," calculates real-time shift analytics, and provides a live dashboard for floor supervisors.
 
 ---
 
-## 2. System Architecture & Tech Stack
+## 2. System Architecture
 
-The system is designed with a decentralized, three-tier architecture to handle heavy video processing at the edge while keeping the central server lightweight and scalable.
-
-```
-                   +-------------------+
-                   |   25 IP Cameras   |
-                   +---------+---------+
-                             | RTSP
-                             v
-               +-------------+-------------+
-               |   Edge Processing Layer   |
-               | (YOLOv8 + ByteTrack / GPU)|
-               +-------------+-------------+
-                             | HTTP/REST (JSON Events)
-                             v
-               +-------------+-------------+
-               |    Central Backend API    |
-               |         (FastAPI)         |
-               +-------+-------------+-----+
-                       |             |
-                 RESP  |             | TCP/IP
-                       v             v
-                +------+------+ +----+----+
-                | Redis Cache | |  MySQL  |
-                | (Live State)| | (Vault) |
-                +-------------+ +---------+
-                       ^
-                       | Polls status (5s) / Controls (HTTP POST)
-                +------+------+
-                | React + Vite|
-                |  Dashboard  |
-                +-------------+
-```
-
-### Technology Stack details:
-* **Edge Inference**: YOLOv8 (Nano model for edge performance) + ByteTrack for object detection and persistent tracking. Runs inside Docker containers to allow access to local GPU resources.
-* **Orchestration**: Docker Swarm manages container placements across **5–6 physical edge GPU nodes** (running 4–5 stream containers per node) and supports automatic container recovery.
-* **Central Backend**: FastAPI (Python) web server handling lightweight API events.
-* **Caching (Live State)**: Redis (In-memory database) for sub-millisecond status updates and real-time dashboard consumption.
-* **Relational Storage (Permanent Vault)**: MySQL for persisting audited session results.
-* **Frontend**: React + Vite + Tailwind CSS v3 Web Dashboard (polls status every 5 seconds to reduce server load and performs client-side optimistic timer ticks for a smooth UI experience).
-
----
-
-## 3. System Interfaces & Data Flow
-
-### 3.1 Session Lifecycle States
-Unlike a fixed timer-based loop, the session lifecycle is controlled manually by operators via the dashboard to accommodate deliberate conveyor belt stops:
+The project utilizes a **Hybrid Edge-Cloud Architecture**.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Running : POST /session/start
-    Running --> Paused : POST /session/pause
-    Paused --> Running : POST /session/resume
-    Running --> Idle : POST /session/complete (Saves to MySQL)
-    Paused --> Idle : POST /session/complete (Saves to MySQL)
+graph TD
+    subgraph "Edge Devices (Factory Floor)"
+        Camera[IP Camera - RTSP Stream] --> Edge[Edge Node Processor]
+        Edge --> |Runs YOLOv8 + ByteTrack| Detections[Bag Detected Event]
+        Detections --> |HTTP POST| Backend
+    end
+
+    subgraph "Central Server (Cloud / Local Data Center)"
+        Backend[FastAPI Backend] <--> Redis[(Redis: Live State & Dedup)]
+        Backend <--> MySQL[(MySQL: Historical Audits & Shifts)]
+    end
+
+    subgraph "Operator Control Room"
+        Dashboard[React Web Dashboard] --> |HTTP GET (Polling)| Backend
+        Dashboard --> |HTTP POST (Start/Stop)| Backend
+    end
 ```
 
-1. **Idle**: The conveyor belt is inactive, and no session is running. All camera crossings are ignored.
-2. **Running**: An active loading session is in progress. The edge node tracks bags crossing the line and reports increments.
-3. **Paused**: The loading process is temporarily suspended (e.g., belt stopped for adjustments). Crossing events are ignored, and the session's active loading timer is frozen.
-
-### 3.2 Deduplication Strategy
-To prevent double-counting caused by network retries or back-and-forth movement, the edge node assigns a persistent ID to each bag using **ByteTrack**. When a bag crosses the counting boundary, the edge reports the crossing event with a unique `bag_id`. 
-
-The backend stores counted bag IDs inside a **Redis Set** for the active session. If a request containing an already processed `bag_id` arrives, the backend ignores it.
+### 2.1 The Flow of Data
+1. **Video Ingestion:** An RTSP stream from an IP camera is ingested by an edge node (`edge_node/belt_processor.py`).
+2. **AI Inference:** A YOLOv8 model detects cement bags. ByteTrack assigns persistent IDs to them.
+3. **Event Generation:** When a tracked bag crosses a defined horizontal line, an event is triggered.
+4. **State Management:** The edge node POSTs the `bag_id` to the central backend. The backend checks Redis to ensure the bag hasn't already been counted (deduplication) and increments the live count.
+5. **Dashboard Sync:** The React dashboard polls the backend every 5 seconds to get the latest live counts, edge node health, and overall shift statistics.
 
 ---
 
-## 4. Codebase Specification
+## 3. Technology Stack
 
-### 4.1 Central Backend: [backend/main.py](file:///c:/Users/13shi/Pictures/cement-dispatch/backend/main.py)
-The central backend defines schemas and exposes API endpoints to update Redis and persist completed records in MySQL.
+### 🧠 Edge AI Node
+* **Python 3.x**
+* **Ultralytics YOLOv8 (Nano):** Chosen for its balance of high speed and accuracy on edge hardware.
+* **ByteTrack:** A robust multi-object tracking algorithm that handles occlusions well.
+* **OpenCV:** For video stream handling and frame drawing.
+* **Requests:** For sending lightweight HTTP payloads to the backend.
 
-#### Configuration:
-* Loaded from `.env` via `python-dotenv` at startup. Falls back to default values if not defined.
-* **Database Connections**: Configured to bypass Windows IPv6 resolution latency by targeting `127.0.0.1` explicitly.
+### ⚙️ Central Backend
+* **FastAPI:** A modern, high-performance web framework for Python. Handles high concurrency easily.
+* **Redis:** Acts as the "Live State" engine. Stores active session data, live bag counts, and sets of processed bag IDs for O(1) deduplication lookups.
+* **MySQL 8.0:** Acts as the "Permanent Vault". Stores completed session logs (`sessions` table) and aggregated shift summaries (`shifts` table).
 
-#### Exposed Endpoints:
-* **`POST /api/v1/session/start`**: Resets the Redis live count to 0, deletes old deduplication sets, and transitions status to `"running"`.
-* **`POST /api/v1/session/pause`**: Transitions status to `"paused"` and logs the pause timestamp.
-* **`POST /api/v1/session/resume`**: Calculates the paused duration and transitions status back to `"running"`.
-* **`POST /api/v1/session/complete`**: Stops the active session, calculates the net active loading duration (excluding paused time), inserts a row in MySQL, resets Redis status to `"idle"`, and clears deduplication sets.
-* **`GET /api/v1/session/status/{belt_id}`**: Dynamically calculates and returns current status, live count, and running active duration.
-* **`POST /api/v1/count_increment`**: Performs Redis Set deduplication and increments the live count.
-* **`GET /api/v1/sessions`**: Fetches the latest 50 completed sessions from MySQL.
+### 🖥️ Frontend Dashboard
+* **React 18 + Vite:** Fast, modern frontend framework.
+* **Tailwind CSS v3:** Utility-first CSS framework for rapid UI development.
+* **Lucide React:** Beautiful, consistent SVG icons.
 
----
-
-### 4.2 Edge Node: [edge_node/belt_processor.py](file:///c:/Users/13shi/Pictures/cement-dispatch/edge_node/belt_processor.py)
-Runs locally on the edge nodes and manages the camera streams.
-
-#### Core Loop:
-1. **Background Polling Thread**: Checks the backend `/api/v1/session/status/{belt_id}` endpoint every 1.0s to dynamically adjust its internal status (`running`, `paused`, `idle`).
-2. **YOLOv8 & ByteTrack Ingestion**: Ingests RTSP stream frames, detects cement bags, and tracks them using persistent tracking IDs.
-3. **Boundary Check**: If the bag center crosses `COUNTING_LINE_X`, it qualifies as a crossing.
-4. **Action**:
-   * If status is `"running"` and the ID is new, it sends a payload to `/api/v1/count_increment` with the tracking ID as the `bag_id`.
-   * Otherwise, the crossing is discarded.
-5. **OpenCV GUI Overlay**: Draws bounding boxes, tracking IDs, the counting boundary, and displays the live status and count fetched from the backend.
+### 🏗️ Infrastructure & Deployment
+* **Docker & Docker Compose:** For local development and orchestration.
+* **Docker Swarm:** For production deployment. Handles container placement (ensuring edge containers only run on GPU-enabled physical edge nodes using node labels).
 
 ---
 
-### 4.3 Web Dashboard: [frontend/src/App.jsx](file:///c:/Users/13shi/Pictures/cement-dispatch/frontend/src/App.jsx)
-A highly responsive React dashboard styled with Tailwind CSS.
+## 4. Directory Structure
 
-* **Grid Layout**: Displays status cards for all 25 conveyor belts.
-* **Session Controls**: Direct control of each belt's session state (`Start`, `Pause`, `Resume`, `Complete`).
-* **Optimized Polling**: Polls statuses and completed sessions at a 5-second interval.
-* **Client-Side Timer ticking**: Updates active session elapsed timers smoothly in the UI every 1.0s without flooding backend APIs.
-* **Audit Logs**: Displays completed sessions directly from the MySQL database.
-
----
-
-### 4.4 Load Simulation: [edge_node/simulate_load.py](file:///c:/Users/13shi/Pictures/cement-dispatch/edge_node/simulate_load.py)
-A tool to simulate concurrency and test backend capacity.
-* Simulates 25 concurrent streams pushing bag counts.
-* Validates deduplication and concurrent writes under heavy loads.
-
----
-
-### 4.5 Database Infrastructure & Containerization
-* **Local Development**: [infrastructure/docker-compose.yml](file:///c:/Users/13shi/Pictures/cement-dispatch/infrastructure/docker-compose.yml) spins up developer instances of Redis and MySQL.
-* **Production Scaling**: [infrastructure/docker-swarm-stack.yml](file:///c:/Users/13shi/Pictures/cement-dispatch/infrastructure/docker-swarm-stack.yml) defines the swarm orchestration for 25 belts:
-  * Scales the FastAPI backend.
-  * Schedules edge containers onto physical GPU nodes using Docker constraints.
-  * Connects container streams to NVIDIA GPUs for hardware acceleration.
-* **Docker Blueprints**:
-  * [backend/Dockerfile](file:///c:/Users/13shi/Pictures/cement-dispatch/backend/Dockerfile): Python 3.11-slim, packages installed from `requirements.txt`.
-  * [edge_node/Dockerfile](file:///c:/Users/13shi/Pictures/cement-dispatch/edge_node/Dockerfile): Ultralytics base image (includes PyTorch, CUDA, OpenCV), custom weights.
-  * [frontend/Dockerfile](file:///c:/Users/13shi/Pictures/cement-dispatch/frontend/Dockerfile): Multi-stage container. Builds react assets and serves them via Nginx configured for React routing.
-
----
-
-## 5. Local Setup & Execution Guide
-
-Follow these steps to run the complete pipeline on your local environment:
-
-### Step 1: Clone and Configure Environment Variables
-Copy `.env.example` templates to `.env` in both backend and edge_node directories:
-```powershell
-cp backend/.env.example backend/.env
-cp edge_node/.env.example edge_node/.env
+```text
+cement-dispatch/
+│
+├── backend/                  # Central API Server
+│   ├── main.py               # FastAPI application, routing, and DB logic
+│   ├── requirements.txt      # Python dependencies
+│   ├── Dockerfile            # Container definition
+│   └── .env.example          # Environment variable template
+│
+├── frontend/                 # React Web Dashboard
+│   ├── src/
+│   │   ├── App.jsx           # Main UI logic (Tabs, State, Polling)
+│   │   ├── main.jsx          # React DOM entry point
+│   │   └── index.css         # Tailwind directives
+│   ├── vite.config.js        # Vite bundler config
+│   ├── tailwind.config.js    # Tailwind theme extensions
+│   ├── package.json          # Node dependencies
+│   ├── Dockerfile            # Build process + Nginx serving
+│   └── nginx.conf            # Nginx routing config
+│
+├── edge_node/                # Edge AI Inference Scripts
+│   ├── belt_processor.py     # Core CV script (reads video, runs YOLO, sends API calls)
+│   ├── simulate_load.py      # Dev tool: simulates edge API calls without needing a GPU
+│   ├── requirements.txt      # Python dependencies (assuming base image has torch/cv2)
+│   └── Dockerfile            # Container definition (uses ultralytics base image)
+│
+└── infrastructure/           # Deployment & Orchestration
+    ├── docker-compose.yml    # For local dev (spins up Redis + MySQL easily)
+    ├── docker-swarm-stack.yml# Production swarm definition
+    ├── deploy.sh             # Linux Swarm deployment automation
+    ├── deploy.ps1            # Windows Swarm deployment automation
+    └── DEPLOYMENT.md         # Comprehensive production deployment guide
 ```
-*(Customize backend credentials and edge camera options in your local `.env` files.)*
 
-### Step 2: Start Databases
-Ensure Docker Desktop is running, navigate to the `infrastructure` folder, and start the databases:
-```powershell
+---
+
+## 5. Core Concepts & Lifecycles
+
+### 5.1 The "Session" Lifecycle
+A "session" represents a continuous period of loading bags onto a single belt.
+
+1. **Idle:** The belt is off. The edge node is running but is ignoring bag crossings.
+2. **Running:** The operator clicks "Start" on the dashboard. The backend creates a Redis key for the session. The edge node begins sending counts.
+3. **Paused:** The operator clicks "Pause". The timer stops, and the edge node's counts are ignored by the backend.
+4. **Completed:** The operator clicks "Stop". The backend takes the final count and duration from Redis, saves it as a permanent record in the MySQL `sessions` table, and deletes the Redis keys. The belt returns to `Idle`.
+
+### 5.2 Shift Analytics
+A "Shift" is defined dynamically by the system:
+- **Shift Start:** Triggered automatically when the first belt changes from `idle` to `running`.
+- **Shift Active:** While *any* belt is running or paused, the shift is considered active. The dashboard shows a live aggregate of all bags loaded.
+- **Shift Complete:** When the *last* active belt is stopped (meaning all 25 belts are now `idle`), the backend automatically finalizes the shift. It calculates the total bags, duration, and belt-wise breakdown, and saves it to the MySQL `shifts` table.
+
+### 5.3 Edge Node Health Tracking
+Edge nodes run a background daemon thread that sends a `POST /api/v1/heartbeat` every 10 seconds.
+The backend stores the last heartbeat timestamp in Redis. If a belt's last heartbeat is older than 15 seconds, the dashboard marks the belt as **OFFLINE**.
+
+### 5.4 Bag Deduplication
+Because CV tracking can sometimes lose and re-acquire a target (assigning it a new ID), deduplication is handled intelligently:
+- The edge node assigns a unique ID to every bag it tracks across the line.
+- When `POST /api/v1/count_increment` is called, the backend adds the `bag_id` to a Redis Set (`belt_XX:processed_bags`).
+- If the ID is already in the set, the count is *not* incremented.
+
+---
+
+## 6. Local Development Setup
+
+To work on this project locally, you don't need a GPU. You can simulate the edge nodes using the provided mock script.
+
+### Prerequisites
+- Docker Desktop
+- Python 3.10+
+- Node.js 18+
+
+### Step 1: Start Databases
+```bash
 cd infrastructure
 docker-compose up -d
 ```
+*This spins up Redis on port 6379 and MySQL on port 3306.*
 
-### Step 3: Install Python & Node Dependencies
-Install the required packages:
-```powershell
-# Backend Dependencies
-cd ../backend
+### Step 2: Start the Backend
+```bash
+cd backend
+python -m venv venv
+# Windows: venv\Scripts\activate | Mac/Linux: source venv/bin/activate
 pip install -r requirements.txt
-
-# Edge Node Dependencies
-cd ../edge_node
-pip install -r requirements.txt
-
-# Frontend Dependencies
-cd ../frontend
-npm install
-```
-
-### Step 4: Run the Central Backend
-Start the FastAPI server from the `backend` folder:
-```powershell
-cd ../backend
 uvicorn main:app --reload --port 8000
 ```
-*The API interactive documentation will be available at http://localhost:8000/docs.*
 
-### Step 5: Run the Frontend Dashboard
-Start the Vite developer server from the `frontend` folder:
-```powershell
-cd ../frontend
+### Step 3: Start the Frontend
+```bash
+cd frontend
+npm install
 npm run dev
 ```
-*Access the Web UI dashboard at http://localhost:5173/.*
+*Open `http://localhost:5173` in your browser.*
 
-### Step 6: Run the Edge Processor
-Run the vision simulator from the `edge_node` folder:
-```powershell
-cd ../edge_node
-python belt_processor.py
+### Step 4: Simulate Edge Traffic
+Since you likely don't have 25 RTSP cameras and a massive GPU locally, use the simulator to send fake bag counts to the backend:
+```bash
+cd edge_node
+python simulate_load.py
 ```
-*An OpenCV window will appear showing the video feed in an `IDLE` state. As you start, pause, and complete sessions from the frontend dashboard, the edge processor will automatically synchronize and begin sending detections.*
+*Go to the dashboard, click "Start" on some belts, and watch the simulator automatically increment the counts.*
+
+---
+
+## 7. Production Deployment
+
+The system is deployed using **Docker Swarm**. 
+
+Production deployment requires:
+1. A Manager node (Central Server).
+2. Worker nodes with GPUs (Edge Devices).
+3. Using `docker node update --label-add gpu=true <node_id>` to pin workloads correctly.
+
+For full step-by-step production instructions, see **[infrastructure/DEPLOYMENT.md](infrastructure/DEPLOYMENT.md)**.
+
+---
+
+## 8. Known Gaps / Pending Work
+As of the current version, the core logic is complete, but the following production-hardening tasks remain:
+
+1. **Security (JWT Auth):** The FastAPI endpoints currently lack authentication. A JWT login system must be implemented for the dashboard, and a static API key header must be implemented for edge-node communication.
+2. **RTSP Reconnect Logic:** `belt_processor.py` needs a robust `try/except` loop around `cv2.VideoCapture` to automatically reconnect if a factory IP camera drops off the network temporarily.

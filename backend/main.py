@@ -294,7 +294,8 @@ def get_session_status(belt_id: str):
         "status": status,
         "live_count": live_count,
         "active_duration": max(0.0, elapsed_time),
-        "is_online": is_online
+        "is_online": is_online,
+        "last_heartbeat": float(last_hb) if last_hb else None
     }
 
 
@@ -316,6 +317,36 @@ def get_all_sessions():
         results = cursor.fetchall()
     conn.close()
     return {"total_sessions_saved": len(results), "sessions": results}
+
+
+@app.get("/api/v1/shifts")
+def get_all_shifts():
+    """
+    Returns all completed shift records from MySQL, newest first.
+    Used by the Shift History table in the dashboard.
+    """
+    conn = get_db_connection()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT * FROM shifts ORDER BY created_at DESC LIMIT 30")
+        rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for row in rows:
+        belt_summary = row["belt_summary"]
+        if isinstance(belt_summary, str):
+            belt_summary = json.loads(belt_summary)
+        result.append({
+            "id": row["id"],
+            "start_time": row["start_time"],
+            "end_time": row["end_time"],
+            "duration_secs": round(row["end_time"] - row["start_time"], 1),
+            "total_bags": row["total_bags"],
+            "belts_active": len(belt_summary) if belt_summary else 0,
+            "belt_summary": belt_summary,
+            "created_at": str(row["created_at"])
+        })
+    return {"shifts": result, "total": len(result)}
 
 
 @app.get("/api/v1/shift/current")
