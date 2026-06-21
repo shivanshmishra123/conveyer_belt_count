@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Play, Pause, CheckCircle, Activity, Clock, Database,
   AlertTriangle, FileText, Truck, BarChart2, Monitor,
-  Package, Server, Wifi, WifiOff
+  Package, Server, Wifi, WifiOff, ArrowLeft
 } from 'lucide-react';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -22,6 +22,7 @@ export default function App() {
   const [shiftData,     setShiftData]     = useState(null);
   const [lastShift,     setLastShift]     = useState(null);
   const [allShifts,     setAllShifts]     = useState([]);
+  const [selectedShift, setSelectedShift] = useState(null); // shift detail drill-down
   const [errorMessage,  setErrorMessage]  = useState('');
 
   // ── Helpers ────────────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ export default function App() {
 
   const fetchSessions = async () => {
     try {
-      const r = await fetch(`${BACKEND_URL}/api/v1/sessions`);
+      const r = await fetch(`${BACKEND_URL}/api/v1/sessions/current-shift`);
       if (r.ok) setSessions((await r.json()).sessions || []);
     } catch {}
   };
@@ -96,6 +97,13 @@ export default function App() {
     try {
       const r = await fetch(`${BACKEND_URL}/api/v1/shifts`);
       if (r.ok) setAllShifts((await r.json()).shifts || []);
+    } catch {}
+  };
+
+  const fetchShiftDetail = async (id) => {
+    try {
+      const r = await fetch(`${BACKEND_URL}/api/v1/shifts/${id}`);
+      if (r.ok) setSelectedShift(await r.json());
     } catch {}
   };
 
@@ -483,7 +491,110 @@ export default function App() {
               </div>
               {allShifts.length === 0 ? (
                 <p className="text-center text-slate-500 py-8 text-sm">No historical shifts yet.</p>
+              ) : selectedShift ? (
+                /* ── SHIFT DETAIL DRILL-DOWN ── */
+                <div className="space-y-5">
+                  <button
+                    onClick={() => setSelectedShift(null)}
+                    className="flex items-center gap-2 text-sky-400 hover:text-sky-300 text-sm font-semibold transition-colors"
+                  >
+                    <ArrowLeft className="h-4 w-4" /> Back to Shift History
+                  </button>
+
+                  {/* Detail header */}
+                  <div className="bg-sky-950/30 border border-sky-800/40 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <p className="text-xs text-sky-400 font-semibold uppercase tracking-wider">Shift #{selectedShift.id}</p>
+                      <p className="text-white font-bold text-lg mt-1">{formatDateTime(selectedShift.start_time)}</p>
+                      <p className="text-slate-400 text-sm mt-0.5">Duration: {formatDuration(selectedShift.duration_secs)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Total Bags</p>
+                      <p className="text-5xl font-black text-sky-400">{selectedShift.total_bags.toLocaleString()}</p>
+                    </div>
+                  </div>
+
+                  {/* Belt-wise breakdown (includes 0-count belts) */}
+                  <div className="bg-slate-900/30 border border-slate-800 rounded-xl p-5">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
+                      Belt-wise Contribution — {Object.keys(selectedShift.belt_summary).length} belt{Object.keys(selectedShift.belt_summary).length !== 1 ? 's' : ''} active
+                    </p>
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase">
+                          <th className="py-2.5 px-3">Rank</th>
+                          <th className="py-2.5 px-3">Belt</th>
+                          <th className="py-2.5 px-3 text-right">Bags</th>
+                          <th className="py-2.5 px-3 text-right">Share</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/50 text-sm">
+                        {Object.entries(selectedShift.belt_summary)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([id, count], idx) => (
+                            <tr key={id} className="hover:bg-slate-900/20 transition-colors">
+                              <td className="py-2.5 px-3 font-mono text-xs text-slate-400">
+                                {idx === 0 ? '🥇 1' : idx === 1 ? '🥈 2' : idx === 2 ? '🥉 3' : `#${idx + 1}`}
+                              </td>
+                              <td className="py-2.5 px-3 font-bold text-white uppercase">{id.replace('_', ' ')}</td>
+                              <td className={`py-2.5 px-3 text-right font-black text-base ${count === 0 ? 'text-slate-500' : 'text-emerald-400'}`}>
+                                {count}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                {selectedShift.total_bags > 0 ? (
+                                  <div className="flex items-center justify-end gap-2">
+                                    <div className="w-20 bg-slate-800 rounded-full h-1.5">
+                                      <div className="bg-emerald-500 h-1.5 rounded-full" style={{ width: `${Math.round((count / selectedShift.total_bags) * 100)}%` }} />
+                                    </div>
+                                    <span className="text-xs text-slate-400 font-mono w-8 text-right">
+                                      {Math.round((count / selectedShift.total_bags) * 100)}%
+                                    </span>
+                                  </div>
+                                ) : <span className="text-xs text-slate-600">—</span>}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Individual session log */}
+                  {selectedShift.sessions && selectedShift.sessions.length > 0 && (
+                    <div className="bg-slate-900/30 border border-slate-800 rounded-xl p-5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
+                        Session Log — {selectedShift.sessions.length} run{selectedShift.sessions.length !== 1 ? 's' : ''} completed
+                      </p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase">
+                              <th className="py-2.5 px-3">Belt</th>
+                              <th className="py-2.5 px-3">Start</th>
+                              <th className="py-2.5 px-3">End</th>
+                              <th className="py-2.5 px-3 text-right">Duration</th>
+                              <th className="py-2.5 px-3 text-right">Bags</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/50 text-sm text-slate-300">
+                            {selectedShift.sessions.map(s => (
+                              <tr key={s.id} className="hover:bg-slate-900/20 transition-colors">
+                                <td className="py-2.5 px-3 font-bold text-white uppercase">{s.belt_id.replace('_', ' ')}</td>
+                                <td className="py-2.5 px-3 font-mono text-xs">{formatTime(s.start_time)}</td>
+                                <td className="py-2.5 px-3 font-mono text-xs">{formatTime(s.end_time)}</td>
+                                <td className="py-2.5 px-3 text-right font-mono text-xs">{formatDuration(s.end_time - s.start_time)}</td>
+                                <td className={`py-2.5 px-3 text-right font-bold ${s.total_count === 0 ? 'text-slate-500' : 'text-emerald-400'}`}>
+                                  {s.total_count}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
               ) : (
+                /* ── HISTORY LIST ── */
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -497,7 +608,12 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-slate-800/50 text-sm text-slate-300">
                       {allShifts.map((shift) => (
-                        <tr key={shift.id} className="hover:bg-slate-900/20 transition-colors">
+                        <tr
+                          key={shift.id}
+                          onClick={() => fetchShiftDetail(shift.id)}
+                          className="hover:bg-slate-800/50 transition-colors cursor-pointer"
+                          title="Click to view shift details"
+                        >
                           <td className="py-3 px-4 font-mono text-xs text-slate-500">#{shift.id}</td>
                           <td className="py-3 px-4 font-mono text-xs">{formatDateTime(shift.start_time)}</td>
                           <td className="py-3 px-4 text-center text-slate-300">{shift.belts_active}</td>
@@ -520,14 +636,15 @@ export default function App() {
           <div className="bg-slate-900/30 border border-slate-800 rounded-2xl p-6">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <FileText className="h-5 w-5 text-sky-400" /> Completed Audits
+                <FileText className="h-5 w-5 text-sky-400" /> Current Shift Audits
               </h2>
-              <span className="text-xs text-slate-400 font-mono">Latest {sessions.length} records</span>
+              <span className="text-xs text-slate-400 font-mono">{sessions.length} record{sessions.length !== 1 ? 's' : ''} this shift</span>
             </div>
             {sessions.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <Database className="h-10 w-10 mx-auto mb-2 opacity-30" />
-                <p>No completed sessions logged in database.</p>
+                <p>No belts have been stopped during this shift yet.</p>
+                <p className="text-sm mt-1 text-slate-600">Stopped belts (even with 0 bags) will appear here.</p>
               </div>
             ) : (
               <div className="overflow-x-auto">

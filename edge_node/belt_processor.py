@@ -144,7 +144,7 @@ def process_video():
                 center_x = int((x1 + x2) / 2)
                 
                 # Check if the object's X center crosses the vertical line
-                if center_x > COUNTING_LINE_X and track_id not in counted_ids:
+                if center_x < COUNTING_LINE_X and track_id not in counted_ids:
                     counted_ids.add(track_id)
                     
                     if session_status == "running":
@@ -178,11 +178,8 @@ def process_video():
     cap.release()
     cv2.destroyAllWindows()
 if __name__ == "__main__":
-    # Start background polling thread
     t_status = threading.Thread(target=poll_backend_status, daemon=True)
     t_status.start()
-    
-    # Start background heartbeat thread
     t_hb = threading.Thread(target=send_heartbeats, daemon=True)
     t_hb.start()
     

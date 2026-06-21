@@ -158,6 +158,9 @@ def start_session(payload: SessionControlPayload):
         r.set("shift:start_time", current_time)
         print(f"[SHIFT STARTED] New shift opened at {current_time:.0f}")
 
+    # Track which belts participated in this shift (for 0-count inclusion)
+    r.sadd("shift:active_belts", belt_id)
+
     return {"status": "success", "message": f"Session started for {belt_id}"}
 
 
@@ -235,14 +238,14 @@ def complete_session(payload: SessionControlPayload):
         shift_end = time.time()
         shift_start = float(r.get("shift:start_time") or shift_end)
 
-        # Collect per-belt bag counts accumulated throughout the shift
+        # Collect per-belt bag counts — include ALL belts that participated, even 0-count ones
         belt_summary = {}
         shift_total = 0
-        for b in ALL_BELTS:
+        active_belts_in_shift = r.smembers("shift:active_belts") or set()
+        for b in active_belts_in_shift:
             count = int(r.get(f"shift:{b}:count") or 0)
-            if count > 0:
-                belt_summary[b] = count
-                shift_total += count
+            belt_summary[b] = count  # include even if 0
+            shift_total += count
 
         # Write shift summary to MySQL
         shift_conn = get_db_connection()
@@ -255,7 +258,7 @@ def complete_session(payload: SessionControlPayload):
         shift_conn.close()
 
         # Clean up all shift Redis keys
-        r.delete("shift:active", "shift:start_time")
+        r.delete("shift:active", "shift:start_time", "shift:active_belts")
         for b in ALL_BELTS:
             r.delete(f"shift:{b}:count")
 
@@ -319,6 +322,52 @@ def get_all_sessions():
     return {"total_sessions_saved": len(results), "sessions": results}
 
 
+@app.get("/api/v1/sessions/current-shift")
+def get_current_shift_sessions():
+    """
+    Returns only the sessions that belong to the current shift window.
+    - If a shift is active: returns all sessions completed since shift:start_time (Redis).
+    - If no shift is active: returns all sessions from the most recent completed shift window.
+    - Includes 0-count sessions (all completed belt runs are stored regardless of count).
+    """
+    shift_active = r.get("shift:active")
+
+    if shift_active:
+        # Shift is currently running — use the Redis start time as lower bound
+        shift_start = float(r.get("shift:start_time") or 0)
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM sessions WHERE start_time >= %s ORDER BY start_time ASC",
+                (shift_start,)
+            )
+            results = cursor.fetchall()
+        conn.close()
+        return {"sessions": results, "shift_status": "active", "shift_start": shift_start}
+    else:
+        # No active shift — fetch the last completed shift from MySQL to get the time window
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT start_time, end_time FROM shifts ORDER BY created_at DESC LIMIT 1")
+            last_shift = cursor.fetchone()
+
+        if not last_shift:
+            conn.close()
+            return {"sessions": [], "shift_status": "idle", "shift_start": None}
+
+        shift_start = last_shift["start_time"]
+        shift_end = last_shift["end_time"]
+
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM sessions WHERE start_time >= %s AND start_time <= %s ORDER BY start_time ASC",
+                (shift_start, shift_end)
+            )
+            results = cursor.fetchall()
+        conn.close()
+        return {"sessions": results, "shift_status": "idle", "shift_start": shift_start, "shift_end": shift_end}
+
+
 @app.get("/api/v1/shifts")
 def get_all_shifts():
     """
@@ -349,6 +398,46 @@ def get_all_shifts():
     return {"shifts": result, "total": len(result)}
 
 
+@app.get("/api/v1/shifts/{shift_id}")
+def get_shift_detail(shift_id: int):
+    """
+    Returns full detail for a single shift: metadata + all individual belt sessions
+    that occurred within that shift's time window. Used by the shift detail drill-down view.
+    """
+    conn = get_db_connection()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT * FROM shifts WHERE id = %s", (shift_id,))
+        shift = cursor.fetchone()
+
+    if not shift:
+        conn.close()
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    # Fetch all individual belt sessions within this shift's time window
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT * FROM sessions WHERE start_time >= %s AND start_time <= %s ORDER BY belt_id ASC, start_time ASC",
+            (shift["start_time"], shift["end_time"])
+        )
+        shift_sessions = cursor.fetchall()
+    conn.close()
+
+    belt_summary = shift["belt_summary"]
+    if isinstance(belt_summary, str):
+        belt_summary = json.loads(belt_summary)
+
+    return {
+        "id": shift["id"],
+        "start_time": shift["start_time"],
+        "end_time": shift["end_time"],
+        "duration_secs": round(shift["end_time"] - shift["start_time"], 1),
+        "total_bags": shift["total_bags"],
+        "belt_summary": belt_summary or {},
+        "sessions": shift_sessions
+    }
+
+
 @app.get("/api/v1/shift/current")
 def get_current_shift():
     """
@@ -372,12 +461,13 @@ def get_current_shift():
     total = 0
     belts_active = 0
 
-    for b in ALL_BELTS:
+    # Include ALL belts that started in this shift, even those with 0 bags so far
+    active_belts_in_shift = r.smembers("shift:active_belts") or set()
+    for b in active_belts_in_shift:
         count = int(r.get(f"shift:{b}:count") or 0)
         status = r.get(f"{b}:status") or "idle"
-        if count > 0:
-            per_belt[b] = count
-            total += count
+        per_belt[b] = count  # include even if 0
+        total += count
         if status in ("running", "paused"):
             belts_active += 1
 
