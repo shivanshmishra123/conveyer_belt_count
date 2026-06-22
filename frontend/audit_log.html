@@ -1,0 +1,326 @@
+<!DOCTYPE html><html class="light" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Cement Dispatch - Audit Log</title>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<!-- Google Fonts: Geist for body/headlines, JetBrains Mono for data labels -->
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&amp;family=JetBrains+Mono:wght@100..800&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-tint": "#565e74",
+                        "tertiary": "#000000",
+                        "surface-bright": "#f8f9ff",
+                        "surface-container-lowest": "#ffffff",
+                        "secondary-fixed": "#6ffbbe",
+                        "inverse-surface": "#213145",
+                        "on-tertiary": "#ffffff",
+                        "on-surface": "#0b1c30",
+                        "primary-fixed": "#dae2fd",
+                        "on-tertiary-fixed-variant": "#574425",
+                        "secondary-fixed-dim": "#4edea3",
+                        "surface-variant": "#d3e4fe",
+                        "tertiary-fixed-dim": "#dec29a",
+                        "tertiary-fixed": "#fcdeb5",
+                        "outline-variant": "#c6c6cd",
+                        "tertiary-container": "#271901",
+                        "on-primary-container": "#7c839b",
+                        "on-primary-fixed": "#131b2e",
+                        "background": "#f8f9ff",
+                        "error": "#ba1a1a",
+                        "secondary": "#006c49",
+                        "primary": "#000000",
+                        "on-background": "#0b1c30",
+                        "surface-container-highest": "#d3e4fe",
+                        "secondary-container": "#6cf8bb",
+                        "outline": "#76777d",
+                        "on-tertiary-container": "#98805d",
+                        "on-secondary-fixed-variant": "#005236",
+                        "on-surface-variant": "#45464d",
+                        "on-tertiary-fixed": "#271901",
+                        "inverse-on-surface": "#eaf1ff",
+                        "surface": "#f8f9ff",
+                        "on-secondary-container": "#00714d",
+                        "surface-dim": "#cbdbf5",
+                        "on-secondary-fixed": "#002113",
+                        "surface-container-low": "#eff4ff",
+                        "inverse-primary": "#bec6e0",
+                        "surface-container": "#e5eeff",
+                        "primary-fixed-dim": "#bec6e0",
+                        "surface-container-high": "#dce9ff",
+                        "primary-container": "#131b2e",
+                        "on-error": "#ffffff",
+                        "error-container": "#ffdad6",
+                        "on-primary": "#ffffff",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "on-secondary": "#ffffff",
+                        "on-error-container": "#93000a"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "lg": "24px",
+                        "xs": "4px",
+                        "container-margin": "24px",
+                        "base": "4px",
+                        "xl": "32px",
+                        "sm": "8px",
+                        "gutter": "16px",
+                        "md": "16px"
+                    },
+                    "fontFamily": {
+                        "label-sm": ["JetBrains Mono"],
+                        "body-sm": ["Geist"],
+                        "body-md": ["Geist"],
+                        "body-lg": ["Geist"],
+                        "display-lg": ["Geist"],
+                        "headline-sm": ["Geist"],
+                        "headline-md": ["Geist"],
+                        "label-md": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "label-sm": ["11px", {"lineHeight": "14px", "letterSpacing": "0.05em", "fontWeight": "500"}],
+                        "body-sm": ["13px", {"lineHeight": "18px", "fontWeight": "400"}],
+                        "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "display-lg": ["30px", {"lineHeight": "38px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                        "headline-sm": ["18px", {"lineHeight": "26px", "fontWeight": "500"}],
+                        "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Geist', sans-serif;
+            background-color: #f8f9ff;
+            color: #0b1c30;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        /* Custom scrollbar for data-heavy sections */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+    </style>
+</head>
+<body class="min-h-screen flex">
+<!-- Sidebar (Shared Components Design) -->
+<aside class="fixed left-0 top-0 h-full flex flex-col p-md gap-sm bg-primary-container text-on-primary border-r border-outline-variant w-64 z-50">
+<div class="mb-xl px-sm">
+<h1 class="font-headline-sm text-headline-sm font-black text-on-primary tracking-tight">Control Center</h1>
+<p class="font-body-sm text-body-sm opacity-60">Terminal 01</p>
+</div>
+<nav class="flex-1 space-y-xs">
+<a class="flex items-center gap-md p-md rounded-lg text-on-primary-container opacity-60 hover:opacity-100 hover:bg-primary-fixed-variant transition-all duration-150 group" href="#">
+<span class="material-symbols-outlined">monitoring</span>
+<span class="font-label-md text-label-md">Live Monitor</span>
+</a>
+<a class="flex items-center gap-md p-md rounded-lg text-on-primary-container opacity-60 hover:opacity-100 hover:bg-primary-fixed-variant transition-all duration-150 group" href="#">
+<span class="material-symbols-outlined">assignment</span>
+<span class="font-label-md text-label-md">Shift Summary</span>
+</a>
+<!-- Active State for Audit Log -->
+<a class="flex items-center gap-md p-md bg-secondary text-on-secondary rounded-lg border-l-4 border-secondary-fixed-dim transition-all duration-150 shadow-sm" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">history_edu</span>
+<span class="font-label-md text-label-md">Audit Log</span>
+</a>
+<a class="flex items-center gap-md p-md rounded-lg text-on-primary-container opacity-60 hover:opacity-100 hover:bg-primary-fixed-variant transition-all duration-150 group" href="#">
+<span class="material-symbols-outlined">health_and_safety</span>
+<span class="font-label-md text-label-md">System Health</span>
+</a>
+</nav>
+<div class="mt-auto space-y-xs pt-md border-t border-white/10">
+
+<a class="flex items-center gap-md p-md rounded-lg text-on-primary-container opacity-60 hover:opacity-100 hover:bg-primary-fixed-variant transition-all" href="#">
+<span class="material-symbols-outlined">logout</span>
+<span class="font-label-md text-label-md">Logout</span>
+</a>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 flex-1 flex flex-col min-h-screen">
+<!-- Top App Bar (Shared Components) -->
+<header class="sticky top-0 z-40 bg-primary-container text-on-primary border-b border-outline-variant flex justify-between items-center px-xl py-sm w-full">
+<div class="flex items-center gap-lg">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-secondary-fixed-dim">local_shipping</span>
+<span class="font-headline-md text-headline-md font-bold text-on-primary">Cement Dispatch</span>
+</div>
+
+</div>
+<div class="flex items-center gap-md">
+<div class="flex items-center gap-md mr-lg border-r border-white/10 pr-lg">
+<div class="flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+<span class="font-label-sm text-label-sm text-emerald-400">2 running</span>
+</div>
+<div class="flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-amber-500"></span>
+<span class="font-label-sm text-label-sm text-amber-400">0 paused</span>
+</div>
+<div class="flex items-center gap-xs">
+<span class="material-symbols-outlined text-error text-[14px]">signal_cellular_connected_no_internet_4_bar</span>
+<span class="font-label-sm text-label-sm text-error">0/25 online</span>
+</div>
+</div>
+<button class="text-on-primary-container hover:text-white transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-on-primary-container hover:text-white transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<div class="w-8 h-8 rounded-full bg-surface-variant flex items-center justify-center border border-outline-variant overflow-hidden ml-sm">
+
+</div>
+</div>
+</header>
+<!-- Page Canvas -->
+<div class="p-xl flex-1 max-w-7xl mx-auto w-full">
+<!-- Audit Log Card Container -->
+<div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+<!-- Card Header -->
+<div class="px-lg py-md border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-on-surface-variant" style="font-variation-settings: 'FILL' 1;">history_edu</span>
+<h2 class="font-headline-sm text-headline-sm text-on-surface font-bold tracking-tight">Current Shift Audits</h2>
+</div>
+<div class="flex items-center gap-sm">
+<span class="font-label-md text-label-md text-on-surface-variant opacity-70">2 records this shift</span>
+<div class="flex gap-xs ml-md">
+<button class="p-xs hover:bg-slate-200 rounded transition-colors text-on-surface-variant">
+
+</button>
+<button class="p-xs hover:bg-slate-200 rounded transition-colors text-on-surface-variant">
+
+</button>
+</div>
+</div>
+</div>
+<!-- Table Content -->
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-slate-200 bg-slate-50">
+
+<th class="px-lg py-md font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Belt</th>
+<th class="px-lg py-md font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Start Time</th>
+<th class="px-lg py-md font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">End Time</th>
+<th class="px-lg py-md font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Bags</th>
+<th class="px-lg py-md font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Duration</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100">
+<!-- Row #33 -->
+<tr class="hover:bg-slate-50 transition-colors group">
+
+<td class="px-lg py-md font-body-md text-body-md font-bold text-on-surface">BELT 03</td>
+<td class="px-lg py-md font-label-md text-label-md text-on-surface-variant">09:09:12 PM</td>
+<td class="px-lg py-md font-label-md text-label-md text-on-surface-variant">09:09:14 PM</td>
+<td class="px-lg py-md">
+<span class="inline-flex items-center justify-center px-sm py-xs bg-emerald-50 text-emerald-700 font-label-sm text-label-sm rounded-sm min-w-[32px]">0</span>
+</td>
+<td class="px-lg py-md font-label-md text-label-md text-on-surface-variant">00:02</td>
+</tr>
+<!-- Row #32 -->
+<tr class="hover:bg-slate-50 transition-colors group">
+
+<td class="px-lg py-md font-body-md text-body-md font-bold text-on-surface">BELT 04</td>
+<td class="px-lg py-md font-label-md text-label-md text-on-surface-variant">09:09:13 PM</td>
+<td class="px-lg py-md font-label-md text-label-md text-on-surface-variant">09:09:13 PM</td>
+<td class="px-lg py-md">
+<span class="inline-flex items-center justify-center px-sm py-xs bg-emerald-50 text-emerald-700 font-label-sm text-label-sm rounded-sm min-w-[32px]">0</span>
+</td>
+<td class="px-lg py-md font-label-md text-label-md text-on-surface-variant">00:00</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Card Footer / Pagination (Optional based on high-end patterns) -->
+
+</div>
+<!-- Stats Overview (Asymmetric Detail) -->
+<div class="mt-lg grid grid-cols-1 md:grid-cols-3 gap-md">
+<div class="bg-white border border-slate-200 p-md rounded-lg flex items-center gap-md">
+<div class="w-10 h-10 rounded-sm bg-slate-100 flex items-center justify-center text-on-surface">
+<span class="material-symbols-outlined">speed</span>
+</div>
+<div>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase">Average Duration</p>
+<p class="font-headline-sm text-headline-sm font-bold text-on-surface">1.0s</p>
+</div>
+</div>
+<div class="bg-white border border-slate-200 p-md rounded-lg flex items-center gap-md">
+<div class="w-10 h-10 rounded-sm bg-slate-100 flex items-center justify-center text-on-surface">
+<span class="material-symbols-outlined">inventory_2</span>
+</div>
+<div>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase">Total Bags Processed</p>
+<p class="font-headline-sm text-headline-sm font-bold text-on-surface">0</p>
+</div>
+</div>
+
+</div>
+</div>
+<!-- Footer -->
+<footer class="mt-auto px-xl py-md border-t border-slate-200 flex justify-between items-center bg-white">
+<div class="flex items-center gap-md">
+
+<span class="w-1 h-1 rounded-full bg-slate-300"></span>
+
+</div>
+<div class="flex items-center gap-md">
+<div class="flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">SERVER CONNECTED</span>
+</div>
+<div class="flex items-center gap-xs ml-md">
+
+
+</div>
+</div>
+</footer>
+</main>
+<script>
+        // Simple micro-interaction for the live clock
+        function updateClock() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit', 
+                hour12: true 
+            });
+            const clockEl = document.getElementById('current-time');
+            if (clockEl) clockEl.textContent = timeStr;
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Row interaction feedback
+        document.querySelectorAll('tbody tr').forEach(row => {
+            row.addEventListener('click', () => {
+                row.classList.add('bg-slate-100');
+                setTimeout(() => row.classList.remove('bg-slate-100'), 150);
+            });
+        });
+    </script>
+
+
+</body></html>

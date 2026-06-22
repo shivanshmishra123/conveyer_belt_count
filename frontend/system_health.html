@@ -1,0 +1,488 @@
+<!DOCTYPE html><html class="light" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Cement Dispatch - System Health</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<!-- Google Fonts: Geist and JetBrains Mono -->
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&amp;family=JetBrains+Mono:wght@100..800&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-tint": "#565e74",
+                    "tertiary": "#000000",
+                    "surface-bright": "#f8f9ff",
+                    "surface-container-lowest": "#ffffff",
+                    "secondary-fixed": "#6ffbbe",
+                    "inverse-surface": "#213145",
+                    "on-tertiary": "#ffffff",
+                    "on-surface": "#0b1c30",
+                    "primary-fixed": "#dae2fd",
+                    "on-tertiary-fixed-variant": "#574425",
+                    "secondary-fixed-dim": "#4edea3",
+                    "surface-variant": "#d3e4fe",
+                    "tertiary-fixed-dim": "#dec29a",
+                    "tertiary-fixed": "#fcdeb5",
+                    "outline-variant": "#c6c6cd",
+                    "tertiary-container": "#271901",
+                    "on-primary-container": "#7c839b",
+                    "on-primary-fixed": "#131b2e",
+                    "background": "#f8f9ff",
+                    "error": "#ba1a1a",
+                    "secondary": "#006c49",
+                    "primary": "#000000",
+                    "on-background": "#0b1c30",
+                    "surface-container-highest": "#d3e4fe",
+                    "secondary-container": "#6cf8bb",
+                    "outline": "#76777d",
+                    "on-tertiary-container": "#98805d",
+                    "on-secondary-fixed-variant": "#005236",
+                    "on-surface-variant": "#45464d",
+                    "on-tertiary-fixed": "#271901",
+                    "inverse-on-surface": "#eaf1ff",
+                    "surface": "#f8f9ff",
+                    "on-secondary-container": "#00714d",
+                    "surface-dim": "#cbdbf5",
+                    "on-secondary-fixed": "#002113",
+                    "surface-container-low": "#eff4ff",
+                    "inverse-primary": "#bec6e0",
+                    "surface-container": "#e5eeff",
+                    "primary-fixed-dim": "#bec6e0",
+                    "surface-container-high": "#dce9ff",
+                    "primary-container": "#131b2e",
+                    "on-error": "#ffffff",
+                    "error-container": "#ffdad6",
+                    "on-primary": "#ffffff",
+                    "on-primary-fixed-variant": "#3f465c",
+                    "on-secondary": "#ffffff",
+                    "on-error-container": "#93000a"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "lg": "24px",
+                    "xs": "4px",
+                    "container-margin": "24px",
+                    "base": "4px",
+                    "xl": "32px",
+                    "sm": "8px",
+                    "gutter": "16px",
+                    "md": "16px"
+            },
+            "fontFamily": {
+                    "label-sm": ["JetBrains Mono"],
+                    "body-sm": ["Geist"],
+                    "body-md": ["Geist"],
+                    "body-lg": ["Geist"],
+                    "display-lg": ["Geist"],
+                    "headline-sm": ["Geist"],
+                    "headline-md": ["Geist"],
+                    "label-md": ["JetBrains Mono"]
+            },
+            "fontSize": {
+                    "label-sm": ["11px", {"lineHeight": "14px", "letterSpacing": "0.05em", "fontWeight": "500"}],
+                    "body-sm": ["13px", {"lineHeight": "18px", "fontWeight": "400"}],
+                    "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                    "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                    "display-lg": ["30px", {"lineHeight": "38px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                    "headline-sm": ["18px", {"lineHeight": "26px", "fontWeight": "500"}],
+                    "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                    "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 1;
+        }
+        body {
+            background-color: #f8f9ff;
+            color: #0b1c30;
+        }
+        .sidebar-accent {
+            border-left: 2px solid #006c49;
+        }
+        .active-tab {
+            border-bottom: 2px solid #4edea3;
+            color: #4edea3;
+        }
+    </style>
+</head>
+<body class="font-body-md text-body-md overflow-x-hidden">
+<!-- Top AppBar (from JSON guidance) -->
+<header class="bg-primary-container text-on-primary flex justify-between items-center px-gutter py-sm w-full border-b border-outline-variant fixed top-0 z-50">
+<div class="flex items-center gap-md">
+<span class="material-symbols-outlined text-secondary-fixed-dim" style="font-variation-settings: 'FILL' 1;">local_shipping</span>
+<div>
+<h1 class="font-headline-md text-headline-md font-bold text-on-primary">Cement Dispatch</h1>
+<p class="font-label-sm text-label-sm opacity-60">Conveyor belt monitoring &amp; loading audits</p>
+</div>
+</div>
+<div class="hidden md:flex items-center gap-lg">
+<div class="flex items-center gap-sm">
+<div class="w-2 h-2 rounded-full bg-secondary-fixed-dim animate-pulse" style="opacity: 0.6;"></div>
+<span class="font-label-md text-label-md text-secondary-fixed-dim">2 running</span>
+</div>
+<div class="flex items-center gap-sm">
+<div class="w-2 h-2 rounded-full bg-tertiary-fixed"></div>
+<span class="font-label-md text-label-md text-tertiary-fixed">0 paused</span>
+</div>
+<div class="flex items-center gap-sm">
+<div class="w-2 h-2 rounded-full bg-error"></div>
+<span class="font-label-md text-label-md text-error">0/25 online</span>
+</div>
+<div class="flex gap-md ml-lg">
+<span class="material-symbols-outlined cursor-pointer hover:opacity-80 transition-all" data-icon="notifications">notifications</span>
+<span class="material-symbols-outlined cursor-pointer hover:opacity-80 transition-all" data-icon="settings">settings</span>
+</div>
+</div>
+</header>
+<!-- Side Navigation Bar (from JSON guidance) -->
+<nav class="fixed left-0 top-0 h-full flex flex-col p-md gap-sm bg-primary-container border-r border-outline-variant pt-24 w-64 hidden md:flex">
+<div class="mb-lg px-xs">
+<h2 class="font-headline-sm text-headline-sm font-black text-on-primary">Control Center</h2>
+<p class="font-body-sm text-body-sm opacity-60 text-on-primary">Terminal 01</p>
+</div>
+<a class="flex items-center gap-sm p-sm text-on-primary-container opacity-60 hover:opacity-100 hover:bg-primary-fixed-variant transition-all duration-150" href="#">
+<span class="material-symbols-outlined" data-icon="monitoring">monitoring</span>
+<span class="font-label-md text-label-md">Live Monitor</span>
+</a>
+<a class="flex items-center gap-sm p-sm text-on-primary-container opacity-60 hover:opacity-100 hover:bg-primary-fixed-variant transition-all duration-150" href="#">
+<span class="material-symbols-outlined" data-icon="assignment">assignment</span>
+<span class="font-label-md text-label-md">Shift Summary</span>
+</a>
+<a class="flex items-center gap-sm p-sm text-on-primary-container opacity-60 hover:opacity-100 hover:bg-primary-fixed-variant transition-all duration-150" href="#">
+<span class="material-symbols-outlined" data-icon="history_edu">history_edu</span>
+<span class="font-label-md text-label-md">Audit Log</span>
+</a>
+<a class="flex items-center gap-sm p-sm bg-secondary text-on-secondary rounded-lg border-l-4 border-secondary-fixed-dim" href="#">
+<span class="material-symbols-outlined" data-icon="health_and_safety" style="font-variation-settings: 'FILL' 1;">health_and_safety</span>
+<span class="font-label-md text-label-md">System Health</span>
+</a>
+<div class="mt-auto pt-md border-t border-outline-variant flex flex-col gap-sm">
+
+<a class="flex items-center gap-sm p-sm text-on-primary-container opacity-60 hover:opacity-100" href="#">
+<span class="material-symbols-outlined" data-icon="logout">logout</span>
+<span class="font-label-md text-label-md">Logout</span>
+</a>
+</div>
+</nav>
+<!-- Main Content Area -->
+<main class="md:ml-64 pt-24 px-gutter pb-xl min-h-screen">
+<!-- Navigation Tab Headers (Internal) -->
+<div class="flex gap-lg border-b border-outline-variant mb-xl">
+
+
+
+
+</div>
+<!-- Metric Grid -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-md mb-xl">
+<!-- Metric Card 1 -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-lg flex items-center gap-md">
+<div class="w-12 h-12 rounded bg-surface-container-high flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary opacity-40" data-icon="wifi">wifi</span>
+</div>
+<div>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase">Online Nodes</p>
+<p class="font-display-lg text-display-lg text-secondary">0</p>
+</div>
+</div>
+<!-- Metric Card 2 -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-lg flex items-center gap-md">
+<div class="w-12 h-12 rounded bg-surface-container-high flex items-center justify-center">
+<span class="material-symbols-outlined text-error opacity-40" data-icon="wifi_off">wifi_off</span>
+</div>
+<div>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase">Offline Nodes</p>
+<p class="font-display-lg text-display-lg text-error">25</p>
+</div>
+</div>
+<!-- Metric Card 3 -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-lg flex items-center gap-md">
+<div class="w-12 h-12 rounded bg-surface-container-high flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary opacity-40" data-icon="pulse">pause</span>
+</div>
+<div>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase">Currently Active</p>
+<p class="font-display-lg text-display-lg text-secondary">2</p>
+</div>
+</div>
+<!-- Metric Card 4 -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-lg flex items-center gap-md">
+<div class="w-12 h-12 rounded bg-surface-container-high flex items-center justify-center">
+<span class="material-symbols-outlined text-error opacity-40" data-icon="storage">storage</span>
+</div>
+<div>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase">System Status</p>
+<p class="font-display-lg text-display-lg text-error">25 down</p>
+</div>
+</div>
+</div>
+<!-- Node Status List Card -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden">
+<div class="px-md py-md border-b border-outline-variant flex justify-between items-center bg-white">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-secondary-fixed-dim" data-icon="dns">dns</span>
+<h3 class="font-headline-sm text-headline-sm">Edge Node Status</h3>
+</div>
+<span class="font-label-sm text-label-sm opacity-60">Offline nodes listed first</span>
+</div>
+<!-- Table -->
+<div class="overflow-x-auto">
+<table class="w-full text-left">
+<thead>
+<tr class="bg-surface-container-low border-b border-outline-variant">
+<th class="px-md py-sm font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Belt</th>
+<th class="px-md py-sm font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Connectivity</th>
+<th class="px-md py-sm font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Session</th>
+<th class="px-md py-sm font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider text-right">Bags (Live)</th>
+<th class="px-md py-sm font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider text-right">Active Time</th>
+<th class="px-md py-sm font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider text-right">Last Heartbeat</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant">
+<!-- Belt 01 -->
+<tr class="hover:bg-surface-container transition-colors">
+<td class="px-md py-sm font-label-md text-label-md font-bold">BELT 01</td>
+<td class="px-md py-sm">
+<div class="flex items-center gap-sm text-error">
+<div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+<span class="font-label-sm text-label-sm uppercase">Offline</span>
+</div>
+</td>
+<td class="px-md py-sm">
+<span class="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded-sm font-label-sm text-label-sm uppercase">Running</span>
+</td>
+<td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+<td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:40</td>
+<td class="px-md py-sm font-label-md text-label-md text-right opacity-40">125h ago</td>
+</tr>
+<!-- Belt 02 -->
+<tr class="hover:bg-surface-container transition-colors">
+<td class="px-md py-sm font-label-md text-label-md font-bold">BELT 02</td>
+<td class="px-md py-sm">
+<div class="flex items-center gap-sm text-error">
+<div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+<span class="font-label-sm text-label-sm uppercase">Offline</span>
+</div>
+</td>
+<td class="px-md py-sm">
+<span class="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded-sm font-label-sm text-label-sm uppercase">Running</span>
+</td>
+<td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+<td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:14</td>
+<td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+</tr>
+<!-- Belts 03 to 11 (Loop Simulation) -->
+<script>
+                            const beltNames = ["BELT 03", "BELT 04", "BELT 05", "BELT 06", "BELT 07", "BELT 08", "BELT 09", "BELT 10", "BELT 11"];
+                            beltNames.forEach(name => {
+                                document.write(`
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">${name}</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                `);
+                            });
+                        </script>
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 03</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 04</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 05</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 06</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 07</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 08</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 09</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 10</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+                                    <tr class="hover:bg-surface-container transition-colors">
+                                        <td class="px-md py-sm font-label-md text-label-md font-bold">BELT 11</td>
+                                        <td class="px-md py-sm">
+                                            <div class="flex items-center gap-sm text-error">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+                                                <span class="font-label-sm text-label-sm uppercase">Offline</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-md py-sm">
+                                            <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant rounded-sm font-label-sm text-label-sm uppercase">Idle</span>
+                                        </td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right text-secondary">0</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-60">00:00</td>
+                                        <td class="px-md py-sm font-label-md text-label-md text-right opacity-40">—</td>
+                                    </tr>
+                                
+</tbody>
+</table>
+</div>
+</div>
+</main>
+<!-- Background Decoration -->
+<div class="fixed inset-0 pointer-events-none z-[-1] opacity-20">
+<div class="absolute inset-0 bg-grid-slate-200/50 [mask-image:linear-gradient(to_bottom,white,transparent)]"></div>
+</div>
+<!-- Micro-interaction Script -->
+<script>
+        // Simple hover effects and interaction simulations
+        document.querySelectorAll('tr').forEach(row => {
+            row.addEventListener('click', () => {
+                row.classList.add('bg-surface-container-highest');
+                setTimeout(() => row.classList.remove('bg-surface-container-highest'), 300);
+            });
+        });
+
+        // Simulating some live data flickering for 'Active' metrics
+        setInterval(() => {
+            const runningNodes = document.querySelector('.animate-pulse');
+            if (runningNodes) {
+                runningNodes.style.opacity = Math.random() > 0.5 ? '1' : '0.6';
+            }
+        }, 1500);
+    </script>
+
+
+</body></html>
