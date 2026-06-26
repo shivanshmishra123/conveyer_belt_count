@@ -17,7 +17,7 @@ def load_config():
         "BELT_ID": "belt_01",
         "VIDEO_SOURCE": "A_fixed_static_top_down_came.mp4",
         "FASTAPI_BASE_URL": "http://127.0.0.1:8000",
-        "COUNTING_LINE_X": 100
+        "COUNTING_LINE_Y": 850  # pixels from top; bag is counted after crossing this horizontal line
     }
     # Load config file (defaults to config.json)
     config_path = os.environ.get("BELT_CONFIG_PATH", "config.json")
@@ -25,7 +25,7 @@ def load_config():
         try:
             with open(config_path, "r") as f:
                 file_config = json.load(f)
-                for key in ["belt_id", "video_source", "fastapi_base_url", "counting_line_x"]:
+                for key in ["belt_id", "video_source", "fastapi_base_url", "counting_line_y"]:
                     if key in file_config:
                         config[key.upper()] = file_config[key]
             print(f"[INFO] Loaded configuration from {config_path}")
@@ -36,7 +36,7 @@ def load_config():
     for var_name in config.keys():
         env_val = os.environ.get(var_name)
         if env_val is not None:
-            if var_name == "COUNTING_LINE_X":
+            if var_name == "COUNTING_LINE_Y":
                 try:
                     config[var_name] = int(env_val)
                 except ValueError:
@@ -51,7 +51,7 @@ CONFIG = load_config()
 BELT_ID = CONFIG["BELT_ID"]
 VIDEO_SOURCE = CONFIG["VIDEO_SOURCE"]
 FASTAPI_BASE_URL = CONFIG["FASTAPI_BASE_URL"]
-COUNTING_LINE_X = CONFIG["COUNTING_LINE_X"] 
+COUNTING_LINE_Y = CONFIG["COUNTING_LINE_Y"]
 
 # --- STATE MACHINE VARIABLES ---
 session_status = "idle"  # "idle", "running", "paused"
@@ -141,10 +141,10 @@ def process_video():
             
             for box, track_id in zip(boxes, track_ids):
                 x1, y1, x2, y2 = box
-                center_x = int((x1 + x2) / 2)
+                center_y = int((y1 + y2) / 2)
                 
-                # Check if the object's X center crosses the vertical line
-                if center_x < COUNTING_LINE_X and track_id not in counted_ids:
+                # Check if the object's Y center crosses the horizontal counting line (top-to-bottom movement)
+                if center_y > COUNTING_LINE_Y and track_id not in counted_ids:
                     counted_ids.add(track_id)
                     
                     if session_status == "running":
@@ -163,8 +163,8 @@ def process_video():
 
         # --- VISUALIZATION ---
         
-        # Draw a VERTICAL red counting line instead of horizontal
-        cv2.line(frame, (COUNTING_LINE_X, 0), (COUNTING_LINE_X, frame.shape[0]), (0, 0, 255), 2)
+        # Draw a HORIZONTAL red counting line (bags move top to bottom)
+        cv2.line(frame, (0, COUNTING_LINE_Y), (frame.shape[1], COUNTING_LINE_Y), (0, 0, 255), 2)
         
         # Draw status and the current live count from backend (Redis)
         status_color = (0, 255, 0) if session_status == "running" else (0, 165, 255) if session_status == "paused" else (0, 0, 255)
