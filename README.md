@@ -355,7 +355,215 @@ For the complete step-by-step guide, see **[infrastructure/DEPLOYMENT.md](infras
 
 ---
 
-## 11. Known Gaps / Pending Work
+## 11. Environment Variables Reference
+
+### Backend (`backend/.env`)
+| Variable | Default | Description |
+|---|---|---|
+| `DB_HOST` | `127.0.0.1` | MySQL server hostname |
+| `DB_PORT` | `3306` | MySQL port |
+| `DB_USER` | `api_user` | MySQL username |
+| `DB_PASSWORD` | `apipassword` | MySQL password |
+| `DB_NAME` | `cement_dispatch` | MySQL database name |
+| `REDIS_HOST` | `127.0.0.1` | Redis server hostname |
+| `REDIS_PORT` | `6379` | Redis port |
+| `API_HOST` | `0.0.0.0` | FastAPI listen address |
+| `API_PORT` | `8000` | FastAPI listen port |
+| `CORS_ORIGINS` | `*` | Comma-separated allowed origins (e.g., `http://localhost:5173,http://10.0.1.100:5173`) |
+
+### Edge Node (`edge_node/.env`)
+| Variable | Default | Description |
+|---|---|---|
+| `BELT_ID` | `belt_01` | Unique identifier for this belt (must match dashboard grid: `belt_01` to `belt_25`) |
+| `VIDEO_SOURCE` | `A_fixed_static_top_down_came.mp4` | RTSP URL or local video file path |
+| `FASTAPI_BASE_URL` | `http://127.0.0.1:8000` | Central backend URL the edge node sends events to |
+| `COUNTING_LINE_Y` | `400` | Y-axis pixel position of the horizontal counting line (from top of frame) |
+
+---
+
+## 12. Edge Node Configuration Guide
+
+The edge processor loads configuration in a **3-layer priority chain** (highest priority wins):
+
+```
+Environment Variables  >  config.json  >  Code Defaults
+```
+
+1. **Code defaults** (in `load_config()`): Hardcoded fallback values.
+2. **`config.json`** (next to `belt_processor.py`): Per-belt configuration file. Loaded at startup.
+3. **Environment variables**: Override everything. Used in Docker deployments where `config.json` isn't practical.
+
+### `config.json` Format
+```json
+{
+  "belt_id": "belt_01",
+  "video_source": "A_fixed_static_top_down_came.mp4",
+  "fastapi_base_url": "http://127.0.0.1:8000",
+  "counting_line_y": 400
+}
+```
+
+### Calibrating the Counting Line
+1. Run `python belt_processor.py` — a window opens showing the live video with a **red horizontal line**.
+2. If the line is too high (bags counted too early), **increase** `counting_line_y`.
+3. If the line is too low (bags counted too late or missed), **decrease** `counting_line_y`.
+4. The ideal position is where bags have fully entered the frame and are clearly visible — typically 60–70% down the frame height.
+
+---
+
+## 13. Dashboard UI Guide
+
+The frontend is a **4-tab single-page application**:
+
+### Tab 1 — Live Monitor (`LiveMonitor.jsx`)
+- **25-belt grid** showing each belt's status (idle/running/paused), live bag count, and active duration.
+- **Green/red dot** indicates edge node online/offline status (based on heartbeat).
+- **Action buttons**: Start, Pause, Resume, Stop — one click sends the command to the backend.
+- **Client-side timer**: Duration ticks every 1 second locally (no extra API calls), synced with the server every 5 seconds.
+
+### Tab 2 — Shift Summary (`ShiftSummary.jsx`)
+- **Active shift panel**: Shows total bags so far, belts active, elapsed time, and belt-wise count breakdown (including 0-count belts).
+- **Last completed shift**: Displayed when no shift is active.
+- **Shift history table**: Lists all past shifts. Each row is **clickable** — opens a drill-down view showing:
+  - Shift metadata (start time, duration, total bags)
+  - Belt-wise contribution table with rank, bags, and % share bar
+  - Individual session log (every Start→Stop run within that shift)
+
+### Tab 3 — Audit Log (`AuditLog.jsx`)
+- Shows **only sessions from the current/last shift** (not all historical sessions).
+- Each row shows belt ID, start/end time, active duration, and bag count.
+- 0-count sessions are included.
+
+### Tab 4 — System Health (`SystemHealth.jsx`)
+- Table of all 25 belts with their online/offline status, last heartbeat timestamp, current session status, and time since last heartbeat.
+- Offline belts are sorted to the top for quick visibility.
+- Offline badge count is shown on the tab itself.
+
+---
+
+## 14. Design Decisions
+
+### Why Redis + MySQL (Dual-Store)?
+**Redis** handles the hot path: live counts, session status, and deduplication sets. These are updated on every bag detection event (potentially hundreds per minute across 25 belts). Redis serves these in <1ms.
+
+**MySQL** is the cold path: completed session records and shift summaries. These are written only when an operator clicks "Stop" (infrequent). They need to survive container restarts, which Redis (in-memory) cannot guarantee without persistence config.
+
+### Why HTTP Polling Instead of WebSockets?
+- **Simplicity**: Polling with `setInterval` at 5 seconds is trivial to implement and debug. WebSocket reconnection logic, heartbeats, and state sync add significant complexity.
+- **Scale**: 1 dashboard polling 25 belt statuses every 5 seconds = 1 HTTP request per 5 seconds (the backend returns all 25 statuses in one call). This is negligible load.
+- **Resilience**: If the backend restarts, the dashboard auto-recovers on the next poll. WebSockets would require reconnection logic.
+
+### Why Manual Session Control (No Auto-Termination)?
+The SRS initially proposed a 30-second idle auto-stop. This was **removed by operator request** — conveyor belts in cement plants frequently stop intentionally for 1–2 minutes (truck swap, loading adjustments). Auto-termination would create dozens of false session endings per shift.
+
+### Why `DOUBLE` Timestamps Instead of `DATETIME`?
+Unix epoch floats (e.g., `1719446400.123`) preserve **millisecond precision** and avoid timezone conversion bugs between Python's `time.time()`, Redis strings, and MySQL. Duration math is just `end - start` — no date parsing needed.
+
+### Why No Foreign Key Between Sessions and Shifts?
+A session can be completed (written to MySQL) while the shift is still active (not yet written). A FK would require the shift row to exist first, creating a chicken-and-egg problem. Instead, sessions are linked to shifts at query time via time-window overlap.
+
+---
+
+## 15. End-to-End Sequence: One Bag's Journey
+
+```mermaid
+sequenceDiagram
+    participant Camera as IP Camera
+    participant Edge as Edge Node (belt_processor.py)
+    participant Backend as FastAPI Backend
+    participant Redis as Redis Cache
+    participant MySQL as MySQL Database
+    participant Dashboard as React Dashboard
+
+    Note over Camera,Dashboard: Operator has clicked "Start" on Belt 01
+
+    Camera->>Edge: RTSP video frame
+    Edge->>Edge: YOLOv8 detects bag → ByteTrack assigns ID #42
+    Edge->>Edge: center_y of ID #42 crosses COUNTING_LINE_Y
+    Edge->>Edge: ID #42 not in local counted_ids → add it
+    Edge->>Backend: POST /count_increment {belt_id: "belt_01", bag_id: "42"}
+    Backend->>Redis: SISMEMBER belt_01:counted_bags "42" → 0 (new)
+    Backend->>Redis: SADD belt_01:counted_bags "42"
+    Backend->>Redis: INCR belt_01:live_count → 16
+    Backend->>Redis: INCR shift:belt_01:count → 16
+    Backend-->>Edge: {status: "success", redis_live_count: 16}
+
+    Note over Dashboard: 5 seconds later...
+
+    Dashboard->>Backend: GET /session/status/belt_01
+    Backend->>Redis: GET belt_01:status, live_count, start_time, last_heartbeat
+    Backend-->>Dashboard: {status: "running", live_count: 16, active_duration: 245.7, is_online: true}
+    Dashboard->>Dashboard: Update UI — Belt 01 shows "16 bags"
+```
+
+---
+
+## 16. Troubleshooting & FAQ
+
+### Backend won't start — "Could not connect to MySQL"
+MySQL takes ~10–15 seconds to fully initialize on first `docker-compose up -d`. Wait and retry:
+```bash
+docker logs infrastructure-mysql-1  # check if "ready for connections" appears
+uvicorn main:app --reload
+```
+
+### Dashboard shows all belts as "OFFLINE"
+- **Cause**: No edge node is running, so no heartbeats are being sent.
+- **Fix**: Start `simulate_load.py` or `belt_processor.py`. The simulator sends heartbeats automatically.
+
+### Belt count doesn't increment even though bags are crossing the line
+1. **Check session status**: The belt must be in `running` state (click "Start" on the dashboard first).
+2. **Check counting line position**: The red line might be below the frame. Set `counting_line_y` to a lower value (e.g., 300).
+3. **Check dedup**: If you restarted the video, the same track IDs might be reused. Clear Redis: `docker exec -it infrastructure-redis-1 redis-cli FLUSHALL`
+
+### Video playback in `belt_processor.py` is very laggy
+- **Cause**: YOLO inference on CPU is slow (~150–400ms per frame).
+- **Fix**: Already handled — `INFERENCE_EVERY_N_FRAMES = 2` skips every other frame. Increase to `3` or `4` if still laggy. In production on a GPU, set to `1`.
+
+### Shift doesn't complete after stopping all belts
+- Check that **all 25 belts** are `idle`. Even one belt in `paused` state keeps the shift open.
+- Verify in Redis: `docker exec -it infrastructure-redis-1 redis-cli GET shift:active` — should return `nil` after shift completes.
+
+### How do I reset everything for a fresh demo?
+```bash
+# Wipe Redis (all live state)
+docker exec -it infrastructure-redis-1 redis-cli FLUSHALL
+
+# Wipe MySQL (all history)
+docker exec -it infrastructure-mysql-1 mysql -u api_user -papipassword cement_dispatch -e "TRUNCATE TABLE sessions; TRUNCATE TABLE shifts;"
+
+# Restart backend
+uvicorn main:app --reload
+```
+
+---
+
+## 17. How to Add a New Belt (Scaling Guide)
+
+### In Development (Local Testing)
+1. The backend already supports any `belt_id` string — no code change needed.
+2. Update the `ALL_BELTS` list in `backend/main.py` if you want shift analytics to track more than 25 belts.
+3. Update the frontend grid in `LiveMonitor.jsx` (change `Array.from({ length: 25 }, ...)` to your desired count).
+
+### In Production (Physical Belt)
+1. **Install the camera**: Mount an IP camera above the belt with a top-down view.
+2. **Configure the edge node**: Copy `edge_node/` to the physical edge device. Set in `config.json`:
+   ```json
+   {
+     "belt_id": "belt_26",
+     "video_source": "rtsp://admin:password@10.0.1.76/stream1",
+     "fastapi_base_url": "http://CENTRAL_SERVER_IP:8000",
+     "counting_line_y": 450
+   }
+   ```
+3. **Build and run**: `docker build -t cement-dispatch-edge:latest . && docker run -d cement-dispatch-edge:latest`
+4. **Add to Swarm stack**: Add a new `edge_processor_belt_26` service block in `docker-swarm-stack.yml` with the appropriate node label constraints.
+5. **Update backend**: Add `belt_26` to the `ALL_BELTS` list in `main.py`.
+6. **Update frontend**: Change the belt count from 25 to 26 in `LiveMonitor.jsx`.
+
+---
+
+## 18. Known Gaps / Pending Work
 
 | Item | Priority | Description |
 |---|---|---|
