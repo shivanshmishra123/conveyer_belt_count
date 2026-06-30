@@ -1,132 +1,314 @@
-# Cement Dispatch — System Operator Guide
+# Cement Dispatch — Deployment Guide
 
-This guide covers how to deploy, configure, and maintain the Cement Dispatch multi-node architecture using Docker Swarm.
-
----
-
-## 1. Architecture Overview
-
-The system runs on a **hybrid edge-cloud architecture**:
-- **Manager Node (Central Server):** Runs the Frontend Dashboard, FastAPI Backend, Redis (in-memory state), and MySQL (persistent storage).
-- **Worker Nodes (Edge Devices):** Physical machines installed near the conveyor belts. These nodes require GPUs and run the Computer Vision pipeline (`belt_processor.py`).
+A plain-English, step-by-step guide to getting this system running in production.
 
 ---
 
-## 2. Prerequisites
+## Quick Summary (Read This First)
 
-### On the Manager Node (Central Server):
-- Docker installed (`Docker Desktop` for Windows, or `Docker Engine` for Linux).
+The system has **3 types of machines**:
 
-### On the Worker Nodes (Edge Devices):
-- **Linux OS** (Ubuntu 22.04 recommended)
-- **NVIDIA GPU** installed with proper drivers.
+| Machine | What it runs | Where it sits |
+|---|---|---|
+| **Central Server** (1 machine) | Backend API, Dashboard Website, Redis, MySQL | Server room or cloud VM |
+| **Edge Nodes** (1+ machines) | Camera feed + AI bag detection | Near the conveyor belts, with a GPU |
+| **Operator's Browser** (any laptop) | Opens the dashboard website | Anywhere on the same network |
+
+**The deployment flow is:**
+1. Set up the Central Server → run one script → it starts everything.
+2. For each Edge Node → join it to the server → label it → the AI container starts automatically.
+3. Open the dashboard in a browser → start belts → bags get counted.
+
+---
+
+## 1. What You Need Before Starting
+
+### Central Server
+- Any Windows or Linux machine (no GPU needed).
+- **Docker** installed.
+  - Windows: Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+  - Linux: Install [Docker Engine](https://docs.docker.com/engine/install/).
+- Ports `8000` (backend), `5173` or `80` (frontend), `6379` (Redis), and `3306` (MySQL) should be available.
+
+### Each Edge Node
+- A **Linux machine** (Ubuntu 22.04 recommended).
+- An **NVIDIA GPU** with drivers installed.
 - **Docker Engine** installed.
-- **NVIDIA Container Toolkit** installed (required to pass GPU access into the Docker container).
+- **NVIDIA Container Toolkit** installed — this lets Docker containers use the GPU.
+  ```bash
+  # Install NVIDIA Container Toolkit (Ubuntu)
+  distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+  sudo nvidia-ctk runtime configure --runtime=docker
+  sudo systemctl restart docker
+  ```
+- The camera's **RTSP URL** for the belt this node will monitor (get this from the camera vendor or IT team).
 
 ---
 
-## 3. Step-by-Step Deployment (Central Server)
+## 2. Deploy the Central Server (One-Time Setup)
 
-1. Open a terminal (PowerShell for Windows, Bash for Linux) on the Manager Node.
-2. Navigate to the `infrastructure` directory:
-   ```bash
-   cd cement-dispatch/infrastructure
-   ```
-3. Run the deployment script:
-   - **Windows:** `.\deploy.ps1`
-   - **Linux:** `./deploy.sh`
+This is the easiest part. One script does everything.
 
-This script will automatically:
-- Initialize the server as the Swarm Manager.
-- Build the local Docker images for the backend and frontend.
-- Deploy the central stack components (MySQL, Redis, Backend, Frontend).
+### Step 1: Clone the repo
+```bash
+git clone https://github.com/shivanshmishra123/conveyer_belt_count.git cement-dispatch
+cd cement-dispatch/infrastructure
+```
 
-> [!NOTE]
-> The edge node processors will **not** start automatically until worker nodes are added to the swarm and correctly labeled.
+### Step 2: Run the deployment script
+- **Windows (PowerShell):**
+  ```powershell
+  .\deploy.ps1
+  ```
+- **Linux (Bash):**
+  ```bash
+  chmod +x deploy.sh
+  ./deploy.sh
+  ```
+
+**What this script does automatically:**
+1. Initializes Docker Swarm (makes this machine the "manager").
+2. Builds Docker images for the Backend and Frontend.
+3. Deploys all central services (Redis, MySQL, Backend API, Frontend).
+
+### Step 3: Verify it's running
+```bash
+docker service ls
+```
+You should see services like `cement_dispatch_redis`, `cement_dispatch_mysql`, `cement_dispatch_backend`, all showing `1/1` replicas.
+
+Open the dashboard at: **`http://<SERVER_IP>:8000`** (or whatever port the frontend is mapped to).
+
+> **Note:** MySQL takes about 15–20 seconds to fully start on the first run. If the backend shows connection errors in logs, just wait a moment — it will auto-retry.
 
 ---
 
-## 4. Attaching Edge Nodes (Worker Nodes)
+## 3. Connect an Edge Node (Repeat for Each Belt)
 
-For each physical edge device, you must join it to the Swarm cluster.
+Each physical edge device needs to be "joined" to the central server's Docker Swarm cluster.
 
-### Step 4.1: Get the Join Token
-On the **Manager Node**, run:
+### Step 1: Get the join command
+
+On the **Central Server**, run:
 ```bash
 docker swarm join-token worker
 ```
-This will output a command like:
-`docker swarm join --token SWMTKN-1-... 192.168.1.100:2377`
+It will print something like:
+```
+docker swarm join --token SWMTKN-1-abc123xyz... 192.168.1.100:2377
+```
+Copy this entire command.
 
-### Step 4.2: Join the Worker Node
-Log into your **Edge Device** and run the command generated in the previous step.
+### Step 2: Join the edge node to the swarm
 
-### Step 4.3: Build the Edge Image
-Because the system currently uses local images, you must build the edge processor image directly on the edge node.
-Copy the `edge_node/` folder to the Edge Device and run:
+Log into the **Edge Node** (SSH or physical terminal) and paste the command from Step 1:
 ```bash
+docker swarm join --token SWMTKN-1-abc123xyz... 192.168.1.100:2377
+```
+You should see: `This node joined a swarm as a worker.`
+
+### Step 3: Build the AI image on the edge node
+
+The edge container needs to be built locally on the edge device (because it includes GPU libraries):
+```bash
+# Copy the edge_node folder to this machine first (via SCP, USB, etc.)
 cd edge_node
 docker build -t cement-dispatch-edge:latest .
 ```
 
-> [!TIP]
-> If your company uses a private Docker Registry (e.g., Nexus or Harbor), you can push `cement-dispatch-edge` to the registry from the manager node, and worker nodes will automatically pull it.
+> **Tip:** If your company has a private Docker Registry (e.g., Harbor, Nexus, or AWS ECR), you can push the image once and all edge nodes will pull it automatically — no manual copying needed.
 
----
+### Step 4: Label the edge node
 
-## 5. Labeling Edge Nodes for Placement
-
-The `docker-swarm-stack.yml` file uses **Placement Constraints** to ensure the heavy CV workloads only run on the correct Edge Devices. 
-
-For example, `edge_processor_belt_01` requires a node labeled `gpu=true` and `edge_id=node_01`.
-
-On the **Manager Node**, list your connected nodes:
+Back on the **Central Server**, list all connected nodes:
 ```bash
 docker node ls
 ```
 
-Add the required labels to the specific worker node (replace `<node_id>` with the ID from the previous command):
+Find the edge node's ID, then label it:
 ```bash
+# Replace <node_id> with the actual ID from the list
 docker node update --label-add gpu=true <node_id>
 docker node update --label-add edge_id=node_01 <node_id>
 ```
 
-As soon as the labels are applied, Swarm will automatically schedule the pending `edge_processor_belt_01` container onto that physical edge node.
+**What the labels mean:**
+- `gpu=true` → tells Swarm this machine has a GPU (so it's eligible for AI workloads).
+- `edge_id=node_01` → pins a specific belt's container to this specific machine.
+
+As soon as you apply the labels, Docker Swarm will automatically start the `edge_processor_belt_01` container on that node. No extra commands needed.
 
 ---
 
-## 6. Configuration (.env)
+## 4. Configure Each Belt's Camera and Counting Line
 
-All sensitive configurations should be managed via environment variables.
+Each belt's edge processor needs to know:
+1. **Which belt it is** (`belt_01`, `belt_02`, etc.)
+2. **Where the camera stream is** (RTSP URL)
+3. **Where the counting line is** (Y-pixel position in the video frame)
 
-- **Central Server:** Modify `backend/.env` for MySQL passwords, Redis endpoints, etc.
-- **Edge Node:** The `edge_processor` configuration (RTSP URL, camera mapping, backend IP) is passed via the `environment` block in `docker-swarm-stack.yml`. 
+These are set in the `docker-swarm-stack.yml` file under each edge service:
 
-> [!WARNING]
-> Before going to production, ensure you update the `VIDEO_SOURCE` in `docker-swarm-stack.yml` from local video files to the actual RTSP camera streams (e.g., `rtsp://admin:password@10.0.1.51/stream1`).
-
----
-
-## 7. Useful Operational Commands
-
-Run these on the **Manager Node**:
-
-**Check overall stack status:**
-```bash
-docker stack services cement_dispatch
+```yaml
+edge_processor_belt_01:
+  image: cement-dispatch-edge:latest
+  environment:
+    - BELT_ID=belt_01
+    - VIDEO_SOURCE=rtsp://admin:password@10.0.1.51/stream1   # ← Your camera's RTSP URL
+    - FASTAPI_BASE_URL=http://backend:8000
+    - COUNTING_LINE_Y=400                                      # ← Adjust per camera
 ```
 
-**Check why a service isn't starting (e.g. pending state):**
+### How to find the right `COUNTING_LINE_Y` value
+
+The counting line is a horizontal line drawn across the video. A bag is counted when it passes **below** this line (bags move top to bottom).
+
+1. Temporarily run `belt_processor.py` with a monitor connected to see the live video.
+2. You'll see a **red horizontal line** across the frame.
+3. If bags are counted too early → **increase** the value (moves line down).
+4. If bags are counted too late or missed → **decrease** the value (moves line up).
+5. Good starting point: **60–70% of the frame height** (e.g., if frame is 720px tall, try `450`).
+
+After changing the value in `docker-swarm-stack.yml`, redeploy:
+```bash
+docker stack deploy -c docker-swarm-stack.yml cement_dispatch
+```
+Swarm will rolling-update only the changed services.
+
+---
+
+## 5. Adding More Belts (Scaling)
+
+To add belt #3, #4, ..., #25:
+
+1. **Add a new service block** in `docker-swarm-stack.yml` (copy the `edge_processor_belt_01` block and change `BELT_ID`, `VIDEO_SOURCE`, `edge_id`, and `COUNTING_LINE_Y`).
+
+2. **Label the edge node** that will run this belt:
+   ```bash
+   docker node update --label-add gpu=true <node_id>
+   docker node update --label-add edge_id=node_02 <node_id>
+   ```
+
+3. **Redeploy:**
+   ```bash
+   docker stack deploy -c docker-swarm-stack.yml cement_dispatch
+   ```
+
+> **Can one edge node run multiple belts?** Yes — if the GPU has enough memory. Two belts on one GPU is usually fine for YOLOv8 Nano. Set both services to the same `edge_id` label.
+
+---
+
+## 6. Day-to-Day Operations
+
+### Check if everything is running
+```bash
+docker service ls
+```
+All services should show `1/1` (or `3/3` for the backend which runs 3 replicas).
+
+### See why a service isn't starting
 ```bash
 docker service ps cement_dispatch_edge_processor_belt_01 --no-trunc
 ```
+Common reasons: node not labeled, image not built on that node, GPU not detected.
 
-**View logs for the backend:**
+### View live backend logs
 ```bash
 docker service logs cement_dispatch_backend -f
 ```
 
-**Remove the stack (Stops all services gracefully):**
+### View edge node logs
+```bash
+docker service logs cement_dispatch_edge_processor_belt_01 -f
+```
+
+### Restart a specific service
+```bash
+docker service update --force cement_dispatch_backend
+```
+
+### Stop everything (gracefully)
 ```bash
 docker stack rm cement_dispatch
 ```
+This stops all services but **keeps your MySQL data** (it's stored in a Docker volume).
+
+---
+
+## 7. Data Management
+
+### Clear all live state (Redis)
+Use this when you want a fresh start for the current shift — clears live counts, session states, and dedup sets:
+```bash
+docker exec $(docker ps -q -f name=cement_dispatch_redis) redis-cli FLUSHALL
+```
+
+### Clear all historical records (MySQL)
+Use this to wipe all completed sessions and shift history:
+```bash
+docker exec $(docker ps -q -f name=cement_dispatch_mysql) mysql -u api_user -papipassword cement_dispatch -e "TRUNCATE TABLE sessions; TRUNCATE TABLE shifts;"
+```
+
+### Backup MySQL data
+```bash
+docker exec $(docker ps -q -f name=cement_dispatch_mysql) mysqldump -u api_user -papipassword cement_dispatch > backup_$(date +%Y%m%d).sql
+```
+
+### Restore from backup
+```bash
+cat backup_20260701.sql | docker exec -i $(docker ps -q -f name=cement_dispatch_mysql) mysql -u api_user -papipassword cement_dispatch
+```
+
+---
+
+## 8. Networking Checklist
+
+Make sure these ports are open between machines:
+
+| From | To | Port | Protocol | Purpose |
+|---|---|---|---|---|
+| Edge Node | Central Server | `8000` | TCP (HTTP) | API calls (`/count_increment`, `/heartbeat`) |
+| Operator Browser | Central Server | `8000` | TCP (HTTP) | Dashboard website |
+| Central Server | - | `6379` | TCP | Redis (internal, don't expose to public) |
+| Central Server | - | `3306` | TCP | MySQL (internal, don't expose to public) |
+| Edge Node | IP Camera | `554` | TCP (RTSP) | Camera video stream |
+| Central Server | Edge Nodes | `2377` | TCP | Docker Swarm management |
+| All Nodes | All Nodes | `7946` | TCP/UDP | Docker Swarm node discovery |
+
+---
+
+## 9. Troubleshooting
+
+### Edge processor stuck in "Pending" state
+```bash
+docker service ps cement_dispatch_edge_processor_belt_01 --no-trunc
+```
+**Most common cause:** The node labels don't match. Double-check:
+```bash
+docker node inspect <node_id> --format '{{.Spec.Labels}}'
+```
+Should show `map[edge_id:node_01 gpu:true]`.
+
+### Backend keeps restarting
+Check logs:
+```bash
+docker service logs cement_dispatch_backend --tail 50
+```
+**Most common cause:** MySQL isn't ready yet. The backend will auto-retry on the next restart. Wait 30 seconds.
+
+### Dashboard shows 0 bags even though camera is running
+1. Make sure the operator clicked **"Start"** on the belt in the dashboard.
+2. Check if the counting line (`COUNTING_LINE_Y`) is positioned correctly — it might be off-screen.
+3. Check if the edge node is marked as **ONLINE** in the System Health tab.
+
+### Camera feed not connecting
+Test the RTSP URL directly on the edge node:
+```bash
+ffplay rtsp://admin:password@10.0.1.51/stream1
+```
+If this doesn't work, the issue is the camera network/credentials, not the software.
