@@ -40,7 +40,7 @@ graph TD
 2. **AI Inference:** YOLOv8 Nano detects cement bags in each frame. ByteTrack assigns persistent IDs across frames.
 3. **Line Crossing Detection:** When a tracked bag's center crosses a configurable **horizontal counting line** (Y-axis threshold), an event is fired.
 4. **Deduplication & Counting:** The edge node POSTs the `bag_id` to the backend. The backend adds the ID to a Redis Set — if it already exists, the count is *not* incremented (O(1) dedup).
-5. **Dashboard Sync:** The React dashboard polls the backend every 5 seconds for live counts, edge health, and shift data. Client-side timers tick every 1 second for a smooth UI experience.
+5. **Dashboard Sync:** The React dashboard polls the backend every **5 seconds** for live counts, edge health, and shift data. The edge node polls its own status every **1 second** to detect Start/Pause/Resume commands near-instantly. Client-side timers tick every 1 second for a smooth UI experience.
 
 ---
 
@@ -165,9 +165,9 @@ A **shift** is a higher-level aggregate that spans the entire factory floor:
 - **Shift Complete:** When the **last** active belt is stopped (all 25 belts are `idle`), the backend finalizes the shift — calculates total bags, duration, and belt-wise breakdown, saves it to the MySQL `shifts` table.
 
 ### 5.3 Edge Node Health Tracking
-- Each edge node runs a background daemon thread that sends `POST /api/v1/heartbeat` every **10 seconds**.
+- Each edge node runs a background daemon thread that sends `POST /api/v1/heartbeat` every **5 seconds**.
 - The backend stores the timestamp in Redis (`belt_XX:last_heartbeat`).
-- The dashboard considers a belt **OFFLINE** if its last heartbeat is older than **15 seconds**.
+- The dashboard considers a belt **OFFLINE** if its last heartbeat is older than **15 seconds** (i.e., 3 missed heartbeats).
 - The System Health tab shows all 25 belts sorted by status (offline first).
 
 ### 5.4 Bag Deduplication (O(1))
@@ -190,6 +190,23 @@ On laptops without a GPU, YOLOv8 inference is slow (~150–400ms/frame). To keep
 - `INFERENCE_EVERY_N_FRAMES = 2` — YOLO runs on every 2nd frame.
 - Skipped frames reuse the last detection result (bounding boxes stay visible).
 - Set to `1` in production (GPU) for full-speed processing.
+
+### 5.7 Load Simulator (`simulate_load.py`)
+A full-featured testing and benchmarking tool included in the `edge_node/` directory:
+
+- Spawns **25 concurrent threads** (one per belt), each running a full session lifecycle.
+- Each thread: starts a session → sends 15–30 random bag events → pauses at ~40% completion → resumes → completes the session.
+- Sends heartbeats to register all 25 belts as **online** on the dashboard.
+- Tracks per-request **latency** (avg, min, max) and **success/failure rates** across all API calls.
+- After all threads complete, runs a **database integrity check** — queries MySQL to verify every belt's saved `total_count` matches the expected count.
+- Prints a full telemetry summary.
+
+Usage:
+```bash
+cd edge_node
+python simulate_load.py
+```
+Requires the backend to be running. Dashboard belt controls (Start/Stop) are **not** needed — the simulator handles the full lifecycle itself.
 
 ---
 
@@ -222,12 +239,44 @@ On laptops without a GPU, YOLOv8 inference is slow (~150–400ms/frame). To keep
 | `GET` | `/api/v1/live_count/{belt_id}` | Raw live count from Redis |
 
 ### Request/Response Payloads
-**`POST /api/v1/count_increment`**
+
+**`POST /api/v1/session/start`** — Request:
+```json
+{ "belt_id": "belt_01" }
+```
+Response:
+```json
+{ "status": "success", "message": "Session started for belt_01" }
+```
+
+**`POST /api/v1/count_increment`** — Request:
 ```json
 { "belt_id": "belt_01", "bag_id": "42", "timestamp": 1719446400.123 }
 ```
+Response (new bag):
+```json
+{ "status": "success", "redis_live_count": 16 }
+```
+Response (duplicate):
+```json
+{ "status": "duplicate_ignored", "redis_live_count": 16 }
+```
+Response (belt not running):
+```json
+{ "status": "ignored", "message": "Count increment ignored. Belt session is currently idle.", "redis_live_count": 0 }
+```
 
-**`GET /api/v1/session/status/belt_01`** → Response:
+**`POST /api/v1/heartbeat`** — Request:
+```json
+{ "belt_id": "belt_01", "timestamp": 1719446400.123 }
+```
+
+**`POST /api/v1/session/complete`** — Response:
+```json
+{ "status": "success", "message": "Session completed for belt_01", "total_count": 42, "active_duration": 312.5 }
+```
+
+**`GET /api/v1/session/status/belt_01`** — Response:
 ```json
 {
   "belt_id": "belt_01",
@@ -236,6 +285,36 @@ On laptops without a GPU, YOLOv8 inference is slow (~150–400ms/frame). To keep
   "active_duration": 245.7,
   "is_online": true,
   "last_heartbeat": 1719446395.0
+}
+```
+
+**`GET /api/v1/shift/current`** — Response (active shift):
+```json
+{
+  "shift_status": "active",
+  "shift_start_time": 1719446100.0,
+  "belts_active": 8,
+  "total_bags_so_far": 234,
+  "per_belt": { "belt_01": 42, "belt_03": 0, "belt_07": 18 }
+}
+```
+
+**`GET /api/v1/shifts`** — Response:
+```json
+{
+  "shifts": [
+    {
+      "id": 3,
+      "start_time": 1719440000.0,
+      "end_time": 1719446000.0,
+      "duration_secs": 6000.0,
+      "total_bags": 1250,
+      "belts_active": 22,
+      "belt_summary": { "belt_01": 65, "belt_02": 48, "belt_05": 0 },
+      "created_at": "2026-06-27 14:00:00"
+    }
+  ],
+  "total": 1
 }
 ```
 
@@ -378,6 +457,7 @@ For the complete step-by-step guide, see **[infrastructure/DEPLOYMENT.md](infras
 | `VIDEO_SOURCE` | `A_fixed_static_top_down_came.mp4` | RTSP URL or local video file path |
 | `FASTAPI_BASE_URL` | `http://127.0.0.1:8000` | Central backend URL the edge node sends events to |
 | `COUNTING_LINE_Y` | `400` | Y-axis pixel position of the horizontal counting line (from top of frame) |
+| `BELT_CONFIG_PATH` | `config.json` | Path to the JSON config file (set in Dockerfile, override if config is mounted elsewhere) |
 
 ---
 
@@ -415,11 +495,14 @@ Environment Variables  >  config.json  >  Code Defaults
 
 The frontend is a **4-tab single-page application**:
 
+> **⚠️ Production Note:** The backend URL is hardcoded as `const BACKEND_URL = 'http://127.0.0.1:8000'` in `frontend/src/App.jsx` (line 10). Before deploying to production, **change this** to the central server's actual IP or hostname (e.g., `http://10.0.1.10:8000`). Then rebuild the frontend Docker image.
+
 ### Tab 1 — Live Monitor (`LiveMonitor.jsx`)
 - **25-belt grid** showing each belt's status (idle/running/paused), live bag count, and active duration.
 - **Green/red dot** indicates edge node online/offline status (based on heartbeat).
 - **Action buttons**: Start, Pause, Resume, Stop — one click sends the command to the backend.
 - **Client-side timer**: Duration ticks every 1 second locally (no extra API calls), synced with the server every 5 seconds.
+- The belt count (25) is defined by `Array.from({ length: 25 })` — change this number to scale up or down.
 
 ### Tab 2 — Shift Summary (`ShiftSummary.jsx`)
 - **Active shift panel**: Shows total bags so far, belts active, elapsed time, and belt-wise count breakdown (including 0-count belts).
@@ -563,10 +646,28 @@ uvicorn main:app --reload
 
 ---
 
-## 18. Known Gaps / Pending Work
+## 18. Files Not in Git (Gitignored)
+
+The `.gitignore` excludes several large or sensitive files. If you clone this repo fresh, you will need to obtain these separately:
+
+| File | Location | How to Get It |
+|---|---|---|
+| `best.pt` | `edge_node/best.pt` | Custom-trained YOLOv8 model weights for cement bag detection. Obtain from the ML team or retrain using the Ultralytics training pipeline on your own labeled dataset. Without this file, `belt_processor.py` will crash on startup. |
+| `yolov8n.pt` | `edge_node/yolov8n.pt` | Pretrained YOLOv8 Nano base weights (auto-downloaded by Ultralytics on first run if missing). Only needed if retraining. |
+| `*.mp4` | `edge_node/*.mp4` | Sample conveyor belt footage for local development/testing. Record your own or request from the project owner. |
+| `.env` | `backend/.env`, `edge_node/.env` | Secret credentials. Copy from `.env.example` and fill in your values. |
+| `node_modules/` | `frontend/node_modules/` | Auto-generated. Run `npm install` in the `frontend/` directory. |
+
+> **Important:** The `best.pt` model file is the **single most critical dependency** outside the repo. The system will not function without it. If you're taking over this project, ensure you have a copy before the previous developer leaves.
+
+---
+
+## 19. Known Gaps / Pending Work
 
 | Item | Priority | Description |
 |---|---|---|
 | **JWT Authentication** | 🔴 High | Dashboard endpoints are currently unprotected. Need `POST /auth/login` → JWT token, with all dashboard routes requiring `Authorization: Bearer <token>`. |
 | **Edge API Key** | 🟡 Medium | Edge-facing endpoints (`/count_increment`, `/heartbeat`) need `X-API-Key` header validation to prevent spoofed counts. |
 | **RTSP Reconnection** | 🟡 Medium | `belt_processor.py` needs a `try/except` loop around `cv2.VideoCapture` to auto-reconnect if a factory IP camera reboots mid-shift. |
+| **BACKEND_URL Config** | 🟢 Low | `BACKEND_URL` in `App.jsx` is hardcoded. Should be moved to a build-time env variable (e.g., `VITE_BACKEND_URL`) for easier production deployment. |
+| **Redis Persistence** | 🟢 Low | Redis runs in-memory with no persistence. If Redis restarts mid-shift, all live counts are lost. Consider enabling AOF persistence in production. |

@@ -312,3 +312,128 @@ Test the RTSP URL directly on the edge node:
 ffplay rtsp://admin:password@10.0.1.51/stream1
 ```
 If this doesn't work, the issue is the camera network/credentials, not the software.
+
+### Shift won't complete (stays "active" forever)
+The shift finalizes only when **all 25 belts** are `idle`. Even one belt stuck in `paused` keeps it open. Check:
+```bash
+docker exec $(docker ps -q -f name=cement_dispatch_redis) redis-cli GET shift:active
+```
+If it returns `1`, find the non-idle belt:
+```bash
+for i in $(seq -w 1 25); do
+  echo "belt_$i: $(docker exec $(docker ps -q -f name=cement_dispatch_redis) redis-cli GET belt_$i:status)"
+done
+```
+
+### Edge node shows "OFFLINE" on the dashboard
+The heartbeat is sent every 5 seconds; a belt is marked offline after 15 seconds of no heartbeat. Possible causes:
+1. Edge container isn't running — check `docker service ps`.
+2. Network firewall blocking port `8000` between edge node and central server.
+3. `FASTAPI_BASE_URL` is wrong in the edge service environment — should be `http://backend:8000` when using Swarm's internal DNS.
+
+---
+
+## 10. Changing the Frontend Backend URL (Critical for Production)
+
+The React dashboard has the backend URL **hardcoded** in `frontend/src/App.jsx` (line 10):
+```javascript
+const BACKEND_URL = 'http://127.0.0.1:8000';
+```
+
+For production, you **must** change this to the central server's actual IP before building the frontend Docker image:
+
+1. Edit `frontend/src/App.jsx`:
+   ```javascript
+   const BACKEND_URL = 'http://10.0.1.10:8000';  // ← your central server IP
+   ```
+
+2. Rebuild the frontend image:
+   ```bash
+   cd frontend
+   docker build -t cement-dispatch-frontend:latest .
+   ```
+
+3. Redeploy:
+   ```bash
+   cd infrastructure
+   docker stack deploy -c docker-swarm-stack.yml cement_dispatch
+   ```
+
+> **Note:** This is listed as a known gap in the README. Ideally this should be a build-time env variable (`VITE_BACKEND_URL`), but it hasn't been implemented yet.
+
+---
+
+## 11. Files Not in Git (First-Time Setup)
+
+The `.gitignore` excludes several files that are required to run the system. When cloning fresh, you need these:
+
+| File | Where | What to Do |
+|---|---|---|
+| `best.pt` | `edge_node/` | **YOLOv8 model weights** trained on cement bag images. Without this, `belt_processor.py` crashes. Get from the ML team or retrain. This is the single most critical file. |
+| `*.mp4` | `edge_node/` | Test videos for local dev. Not needed in production (cameras provide RTSP). |
+| `.env` | `backend/`, `edge_node/` | Copy from `.env.example` and fill in your credentials (MySQL password, Redis host, etc.). |
+| `node_modules/` | `frontend/` | Run `npm install` in the `frontend/` directory. |
+
+---
+
+## 12. Updating and Redeploying After Code Changes
+
+### Updating the Backend
+```bash
+# Rebuild the image
+docker build -t cement-dispatch-backend:latest ../backend
+
+# Force Swarm to restart with the new image
+docker service update --force cement_dispatch_backend
+```
+
+### Updating the Frontend
+```bash
+# Remember to update BACKEND_URL in App.jsx if needed
+docker build -t cement-dispatch-frontend:latest ../frontend
+docker service update --force cement_dispatch_frontend
+```
+
+### Updating an Edge Node
+Because edge images are built locally on each worker node, you need to rebuild on each machine:
+```bash
+# On the edge node:
+cd edge_node
+docker build -t cement-dispatch-edge:latest .
+```
+Then from the **manager node**, force the service to pick up the new image:
+```bash
+docker service update --force cement_dispatch_edge_processor_belt_01
+```
+
+### Full Redeployment (Nuclear Option)
+```bash
+docker stack rm cement_dispatch
+# Wait ~10 seconds for all services to stop
+docker stack deploy -c docker-swarm-stack.yml cement_dispatch
+```
+MySQL data survives this because it's stored in a named Docker volume (`mysql_data`).
+
+---
+
+## 13. Redis Persistence Warning
+
+By default, Redis runs **in-memory only** with no disk persistence. This means:
+- If the Redis container restarts mid-shift, **all live counts, session states, and dedup sets are lost**.
+- Completed sessions/shifts in MySQL are safe (they're written at "Stop" time).
+
+For production, consider enabling Redis AOF (Append-Only File) persistence by creating a custom `redis.conf`:
+```
+appendonly yes
+appendfsync everysec
+```
+And mounting it into the Redis container via `docker-swarm-stack.yml`:
+```yaml
+redis:
+  image: redis:alpine
+  command: redis-server /usr/local/etc/redis/redis.conf
+  volumes:
+    - ./redis.conf:/usr/local/etc/redis/redis.conf
+    - redis_data:/data
+```
+This ensures that even if Redis crashes, it can recover the most recent state.
